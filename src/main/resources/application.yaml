@@ -36,6 +36,9 @@ management:
 logbook:
   format:
     style: json
+  obfuscate:
+    headers:
+      - X-API-Key
 
 logging:
   structured:
@@ -43,6 +46,12 @@ logging:
       console: logstash
   level:
     org.zalando.logbook: trace
+    
+ubiquity:
+  scheme: https
+  address: localhost
+  port: 433
+  token: dummy
 
 ---
 
