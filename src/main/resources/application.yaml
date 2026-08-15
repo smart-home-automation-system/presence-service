@@ -50,7 +50,6 @@ logging:
 ubiquity:
   scheme: https
   address: localhost
-  port: 433
   token: dummy
 
 ---

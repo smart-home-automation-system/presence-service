@@ -1,6 +1,7 @@
 package cloud.cholewa.presence.client;
 
 import cloud.cholewa.presence.config.UbiquityConfiguration;
+import cloud.cholewa.presence.model.ubiquity.Client;
 import cloud.cholewa.presence.model.ubiquity.Site;
 import cloud.cholewa.presence.model.ubiquity.UbiquityResponse;
 import lombok.RequiredArgsConstructor;
@@ -33,5 +34,18 @@ public class UbiquityClient {
             .retrieve()
             .bodyToMono(new ParameterizedTypeReference<>() {
             });
+    }
+    
+    public Mono<UbiquityResponse<Client>> getClients() {
+        return ubiquityWebClient.get()
+            .uri(uriBuilder -> ubiquityConfiguration.getUriBuilder(uriBuilder)
+                .path("proxy/network/integration/v1/sites/88f7af54-98f8-306a-a1c7-c9349722b1f6/clients")
+                .queryParam("limit", 200)
+                .build()
+            )
+            .header(AUTH, ubiquityConfiguration.token())
+            .accept(MediaType.APPLICATION_JSON)
+            .retrieve()
+            .bodyToMono(new ParameterizedTypeReference<>() {});
     }
 }

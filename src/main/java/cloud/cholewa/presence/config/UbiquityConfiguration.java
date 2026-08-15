@@ -7,7 +7,6 @@ import org.springframework.web.util.UriBuilder;
 public record UbiquityConfiguration(
     String scheme,
     String address,
-    int port,
     String token
 ) {
     public UriBuilder getUriBuilder(final UriBuilder builder) {

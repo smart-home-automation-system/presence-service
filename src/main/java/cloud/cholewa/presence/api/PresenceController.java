@@ -1,6 +1,6 @@
 package cloud.cholewa.presence.api;
 
-import cloud.cholewa.presence.model.ubiquity.Site;
+import cloud.cholewa.presence.model.ubiquity.Client;
 import cloud.cholewa.presence.model.ubiquity.UbiquityResponse;
 import cloud.cholewa.presence.service.PresenceService;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +17,7 @@ public class PresenceController {
     private final PresenceService presenceService;
     
     @GetMapping
-    Mono<UbiquityResponse<Site>> getSites() {
+    Mono<UbiquityResponse<Client>> getSites() {
         return presenceService.getSites();
     }
 }
