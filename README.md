@@ -84,7 +84,9 @@ openssl s_client -connect <gateway>:443 </dev/null 2>/dev/null | openssl x509 -n
 
 The client uses the official local **UniFi Network Integration API**
 (`/proxy/network/integration/v1`): `GET /sites` to resolve the site and
-`GET /sites/{siteId}/clients`, paged by 200. Should it ever be unavailable, the legacy
+`GET /sites/{siteId}/clients`, paged by 200. Tested against **UniFi Network 10.6.106** on a
+UCG Ultra — re-check the response shape after a major Network upgrade. Should the API ever be
+unavailable, the legacy
 `/proxy/network/api/s/default/stat/sta` is the documented fallback — not implemented.
 
 ## API
