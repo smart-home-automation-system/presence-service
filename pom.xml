@@ -33,6 +33,7 @@
 
 		<!--  internal dependencies versions-->
 		<cholewa-commons.version>1.5.1</cholewa-commons.version>
+		<smart-home-sdk.version>1.3.0</smart-home-sdk.version>
 
 		<!--  plugins versions-->
 		<maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
@@ -59,6 +60,13 @@
 			<artifactId>cholewa-commons</artifactId>
 			<version>${cholewa-commons.version}</version>
 		</dependency>
+		<!-- the household registry models (HouseholdMember, MemberPhoneDetails) read from
+		     database-service - a cross-service contract, so they come from the SDK -->
+		<dependency>
+			<groupId>cloud.cholewa</groupId>
+			<artifactId>smart-home-sdk</artifactId>
+			<version>${smart-home-sdk.version}</version>
+		</dependency>
 
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -70,6 +78,33 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webclient</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-r2dbc</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-flyway</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework</groupId>
+			<artifactId>spring-jdbc</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>r2dbc-postgresql</artifactId>
+			<scope>runtime</scope>
 		</dependency>
 
 		<!-- required by logbook's WebFluxNettyClientConfiguration; logbook declares it optional -->

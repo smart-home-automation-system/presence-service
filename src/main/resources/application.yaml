@@ -6,10 +6,27 @@ spring:
     active: home
   webflux:
     base-path: "/home/presence"
+  flyway:
+    url: ${flyway-url:jdbc:postgresql://${database.host}:${database.port}/${database.name}}
+    user: ${database-user:dummyUser}
+    password: ${database-password:dummyPassword}
+    enabled: on
   reactor:
     # default LIMITED restores ThreadLocals only in "tap" and "handle", so traceId would be
     # missing from the MDC of every log statement inside a reactive chain
     context-propagation: auto
+
+database:
+  host: ${database-host:localhost}
+  port: ${database-port:5432}
+  name: ${database-name:dummyName}
+  username: ${database-user:dummyUser}
+  password: ${database-password:dummyPassword}
+  pool:
+    # this service's share of the 22 backend connections the managed database allows
+    # (heating 8 / database 6 / water 4 / presence 3, 1 free); left out, the pool silently
+    # falls back to the library default of 4
+    max-size: 3
 
 server:
   port: 6200
@@ -54,12 +71,22 @@ unifi:
   site: Default
   certificate-fingerprint: "94:37:F6:2E:A1:15:F8:EF:D8:09:9D:2B:69:69:75:CC:A7:50:B3:49:6C:DD:BA:24:B8:6F:66:D3:5D:4B:3B:7F"
 
+#the household registry is read from database-service inside the cluster, over k8s DNS
+registry:
+  base-url: http://database-service:6200
+
+presence:
+  absence-threshold: PT10M
+
 ---
 
 spring:
   config:
     activate:
       on-profile: local
+
+registry:
+  base-url: http://localhost:6005
 
 server:
   port: 6009
@@ -82,6 +109,8 @@ spring:
   config:
     activate:
       on-profile: test
+  flyway:
+    enabled: false
 
 logbook:
   format:
@@ -95,3 +124,7 @@ logging:
 unifi:
   host: localhost
   api-key: test-key
+
+#a context started by a test must not poll a gateway that is not there
+presence:
+  detection-enabled: false
