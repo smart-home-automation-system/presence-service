@@ -198,6 +198,24 @@ class PresenceEngineTest {
         verify(presenceStatusStore).apply(new Confirmed("Anna", PRESENT, T0.plusMinutes(1)));
     }
 
+    //a read of the stored state that never answers must not hold every later pass hostage
+    @Test
+    void should_restore_again_after_a_read_of_the_state_that_never_answered() {
+        when(presenceStatusStore.findLatestPerMember())
+            .thenReturn(Flux.never())
+            .thenReturn(Flux.empty());
+        connected(PHONE);
+
+        StepVerifier.withVirtualTime(() -> sut.detect())
+            .thenAwait(Duration.ofMinutes(1))
+            .verifyComplete();
+        verify(presenceStatusStore, never()).apply(any());
+
+        detectAt(T0.plusMinutes(1));
+        verify(presenceStatusStore, times(2)).findLatestPerMember();
+        verify(presenceStatusStore).apply(new Changed("Anna", PRESENT, T0.plusMinutes(1), T0.plusMinutes(1)));
+    }
+
     //a failed write of one member neither cancels the members after it nor moves the state:
     //the same decision is made again by the next pass
     @Test

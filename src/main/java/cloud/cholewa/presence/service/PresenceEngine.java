@@ -26,6 +26,7 @@ import java.util.stream.Collectors;
 public class PresenceEngine {
 
     private static final Duration PASS_TIMEOUT = Duration.ofSeconds(50);
+    private static final Duration RESTORE_TIMEOUT = Duration.ofSeconds(20);
 
     private final UnifiClient unifiClient;
     private final HouseholdClient householdClient;
@@ -38,8 +39,11 @@ public class PresenceEngine {
     private final AtomicReference<List<Member>> lastKnownMembers = new AtomicReference<>();
 
     //the state is rebuilt from the latest row of every member once, before the first pass; a failed
-    //read is not cached, so the next pass tries again instead of starting from an empty state
-    private final Mono<Boolean> restored = Mono.defer(this::restoreState)
+    //read is not cached, so the next pass tries again instead of starting from an empty state.
+    //The read carries its own timeout, inside the cache: a cached Mono is not cancelled when its
+    //subscriber is, so without it a query that never answers would outlive the pass timeout and
+    //every later pass would wait on the same dead query.
+    private final Mono<Boolean> restored = Mono.defer(() -> restoreState().timeout(RESTORE_TIMEOUT))
         .cache(done -> Duration.ofMillis(Long.MAX_VALUE), error -> Duration.ZERO, () -> Duration.ZERO);
 
     //A pass never fails: when the gateway, the registry (with nothing read before) or the database
