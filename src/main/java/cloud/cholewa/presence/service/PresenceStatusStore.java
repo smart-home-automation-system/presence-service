@@ -15,7 +15,7 @@ import reactor.core.publisher.Mono;
 //Writes the decisions of the tracker: a row is inserted only when a status changes, a confirmed
 //status just moves last_checked_at of the member's latest row. That keeps the table at a few rows
 //per member per day, and last_checked_at doubles as the freshness of the data - a gap between it
-//and the next started_at is time the service was not watching.
+//and the next started_at is time the member was not watched.
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -49,15 +49,9 @@ public class PresenceStatusStore {
     }
 
     private Mono<Void> change(final Changed changed) {
-        final Mono<Integer> endPrevious = changed.previousEndedAt() == null
-            ? Mono.just(0)
-            : presenceStatusRepository.touchLatest(changed.memberName(), changed.previousEndedAt());
-
-        return endPrevious
-            .then(Mono.defer(() -> presenceStatusRepository.save(new PresenceStatusEntity(
-                null, changed.memberName(), changed.status(), changed.startedAt(), changed.checkedAt()))))
-            .doOnNext(saved -> log.info(
-                "{} is {} since {}", saved.memberName(), saved.status(), saved.startedAt()))
+        return presenceStatusRepository.save(new PresenceStatusEntity(
+                null, changed.memberName(), changed.status(), changed.startedAt(), changed.checkedAt()))
+            .doOnNext(saved -> log.info("{} is {} since {}", saved.memberName(), saved.status(), saved.startedAt()))
             .then();
     }
 }

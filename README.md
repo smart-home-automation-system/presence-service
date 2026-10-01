@@ -51,8 +51,12 @@ service reads that registry and owns only the presence history.
 - The history is one row per period of an unchanged status (`presence_status`: member, status,
   `started_at`, `last_checked_at`). A row is written only when the status changes; a pass that
   confirms it just moves `last_checked_at`, which therefore also shows how fresh the data is.
+  For a present member it is the last time one of their devices was actually seen.
 - Members are identified by their **name** in the registry. Renaming a member there starts a
-  new history under the new name.
+  new history under the new name. A member removed or deactivated there is no longer watched:
+  their last row stops being checked, so "who is at home now" is the latest row of each
+  **active** member.
+- Exactly one instance may run — the current state is kept in memory.
 
 ## Run locally
 

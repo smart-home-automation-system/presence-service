@@ -61,16 +61,37 @@ review.
   read as a household without members.
 - **Absence needs the grace period, counted from the first pass that missed the member** —
   not from the last sighting. That is what keeps an outage of the gateway, a restart of the
-  service and a client skipped by the paging (see below) from turning anyone absent. When the
-  period runs out, the ABSENT row starts at the last sighting and the PRESENT row is ended
-  there (`previousEndedAt`), so `last_checked_at` of that row moves backwards once, on purpose.
+  service and a client skipped by the paging (see below) from turning anyone absent. While
+  waiting, **nothing is written**: a PRESENT row is only ever checked by a pass that saw the
+  member, so its `last_checked_at` is the last sighting — which is where the ABSENT row starts
+  when the period runs out, and what a restart restores as the last sighting.
+- **Inside the tracker time is an `Instant`; only what goes to the store is a local
+  date-time** (the org convention for tables). The grace period is a duration: measured on the
+  local wall clock it shrinks to minutes when the clocks go forward and stretches past an hour
+  when they go back. For the same reason "the latest row of a member" is the highest `id`,
+  never the latest `started_at`, which can run backwards on that night. The stored local times
+  stay ambiguous for that one hour a year — a reporting task that needs exact durations across
+  it would have to move the columns to `TIMESTAMPTZ`.
+- **Members that left the registry are forgotten** (removed or deactivated): their last row
+  simply stops being checked, and if they return, a new row is opened. A reader of "current
+  presence" must therefore combine the latest row with the active registry, or look at how old
+  `last_checked_at` is.
+- **The passes run with `fixedDelay` and a 50 s timeout.** For a method returning a `Mono`
+  Spring waits for the previous run only with a fixed delay; at a fixed rate a slow pass
+  overlaps the next one and both store the same change. The timeout is what keeps a call that
+  never answers from stopping the detection for good. (`WaterSensorCron`, the pattern this was
+  copied from, still uses `fixedRate`.)
 - **Last seen is tracked per member, not per device** (the task asked for per device). The
   outcome is the same — a member is present while any device is seen — and the state stays one
   entry per member. The only difference: a device removed from the registry keeps its member
   present until the grace period ends.
+- **Exactly one instance may run.** Two would poll in parallel and could store the same change
+  twice, so the Deployment uses `strategy: Recreate` instead of a rolling update (which also
+  keeps a rollout from opening a second connection pool). Do not scale it.
 - **The current state lives in memory** (single replica) and is rebuilt from the latest row of
-  every member before the first pass; a failed rebuild is retried by the next pass. For a
-  restored PRESENT member the row's `last_checked_at` stands in for the last sighting.
+  every member before the first pass; a failed rebuild is retried by the next pass. A restart
+  inside a grace period starts that period again (at most one threshold of delay), but the
+  absence still starts at the stored last sighting.
 - **Rows are keyed by `member_name`, not by an id.** The registry API identifies members by
   name and the SDK model carries no id; the name is unique there. A rename in the registry
   starts a new history. There is no foreign key (another database), so rows of a removed

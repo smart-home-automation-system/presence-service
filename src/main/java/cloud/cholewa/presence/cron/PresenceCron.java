@@ -15,7 +15,10 @@ public class PresenceCron {
 
     private final PresenceEngine presenceEngine;
 
-    @Scheduled(fixedRateString = "PT1M", initialDelayString = "PT15S")
+    //fixedDelay, not fixedRate: for a method returning a Mono, Spring waits for the previous run only
+    //with a fixed delay - at a fixed rate a slow pass would overlap the next one, and two passes
+    //deciding on the same uncommitted state store the same change twice
+    @Scheduled(fixedDelayString = "PT1M", initialDelayString = "PT15S")
     Mono<Void> detectPresence() {
         return presenceEngine.detect();
     }

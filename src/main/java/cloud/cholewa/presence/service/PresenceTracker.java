@@ -9,45 +9,60 @@ import cloud.cholewa.presence.model.PresenceStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 import static cloud.cholewa.presence.model.PresenceStatus.ABSENT;
 import static cloud.cholewa.presence.model.PresenceStatus.PRESENT;
 
 //The presence state machine. It holds the current state in memory (the service runs as a single
-//replica) and decides, it does not write: evaluate() returns what has to be stored and the status
+//instance) and decides, it does not write: evaluate() returns what has to be stored and the status
 //of a member moves only when commit() confirms the write - a failed write is simply decided again
 //by the next pass.
+//
+//Inside, time is an Instant: the grace period is a duration, and measured on the local wall clock
+//it would shrink to a few minutes or stretch to over an hour on the two nights the clocks change.
+//Only the values handed to the store are local date-times, the convention of the org's tables.
 @Component
 @RequiredArgsConstructor
 public class PresenceTracker {
 
     private final PresenceProperties presenceProperties;
+    private final Clock clock;
 
     private final Map<String, MemberState> states = new ConcurrentHashMap<>();
 
-    //startup: the latest stored row of a member is its current state. For a PRESENT member the last
-    //check of that row stands in for the moment they were last seen; the grace period itself starts
-    //with the first pass that does not see them, so a restart alone never turns anyone absent.
+    //startup: the latest stored row of a member is its current state. A PRESENT row is only ever
+    //checked by a pass that saw the member, so its last check is the last sighting.
     public void restore(final String memberName, final PresenceStatus status, final LocalDateTime lastCheckedAt) {
         final MemberState state = new MemberState();
         state.status = status;
-        state.lastSeen = status == PRESENT ? lastCheckedAt : null;
+        state.lastSeen = status == PRESENT ? lastCheckedAt.atZone(clock.getZone()).toInstant() : null;
         states.put(memberName, state);
     }
 
+    //One pass over the active members. Members that are no longer in the registry (removed or
+    //deactivated) are forgotten: nobody watches them, so their last row simply stops being checked,
+    //and should they come back, their history continues with a new row - the gap in between is
+    //time they were not watched, like any other gap between last_checked_at and the next started_at.
     public List<PresenceDecision> evaluate(
-        final LocalDateTime now,
+        final Instant now,
         final Collection<Member> members,
         final Set<String> connectedMacAddresses
     ) {
+        states.keySet().retainAll(members.stream().map(Member::name).collect(Collectors.toSet()));
+
         return members.stream()
             .map(member -> evaluate(now, member, connectedMacAddresses))
+            .flatMap(Optional::stream)
             .toList();
     }
 
@@ -59,15 +74,15 @@ public class PresenceTracker {
         }
     }
 
-    private PresenceDecision evaluate(final LocalDateTime now, final Member member, final Set<String> connected) {
+    private Optional<PresenceDecision> evaluate(final Instant now, final Member member, final Set<String> connected) {
         final MemberState state = states.computeIfAbsent(member.name(), name -> new MemberState());
 
         if (member.macAddresses().stream().anyMatch(connected::contains)) {
             state.lastSeen = now;
             state.unseenSince = null;
-            return state.status == PRESENT
-                ? new Confirmed(member.name(), PRESENT, now)
-                : new Changed(member.name(), PRESENT, now, null, now);
+            return Optional.of(state.status == PRESENT
+                ? new Confirmed(member.name(), PRESENT, local(now))
+                : new Changed(member.name(), PRESENT, local(now), local(now)));
         }
 
         if (state.status == PRESENT) {
@@ -78,24 +93,29 @@ public class PresenceTracker {
                 state.unseenSince = now;
             }
             if (now.isBefore(state.unseenSince.plus(presenceProperties.absenceThreshold()))) {
-                return new Confirmed(member.name(), PRESENT, now);
+                //nothing is written while waiting - the PRESENT row keeps the last sighting as its
+                //last check, which is where the absence will start
+                return Optional.empty();
             }
-            //the absence starts when the member was last seen, not when the grace period ran out
-            final LocalDateTime leftAt = state.lastSeen != null ? state.lastSeen : state.unseenSince;
-            return new Changed(member.name(), ABSENT, leftAt, leftAt, now);
+            final Instant leftAt = state.lastSeen != null ? state.lastSeen : state.unseenSince;
+            return Optional.of(new Changed(member.name(), ABSENT, local(leftAt), local(now)));
         }
 
         if (state.status == ABSENT) {
-            return new Confirmed(member.name(), ABSENT, now);
+            return Optional.of(new Confirmed(member.name(), ABSENT, local(now)));
         }
 
-        //a member seen for the first time and not at home - their history starts as absent
-        return new Changed(member.name(), ABSENT, now, null, now);
+        //a member watched for the first time and not at home - their history starts as absent
+        return Optional.of(new Changed(member.name(), ABSENT, local(now), local(now)));
+    }
+
+    private LocalDateTime local(final Instant instant) {
+        return LocalDateTime.ofInstant(instant, clock.getZone());
     }
 
     private static final class MemberState {
-        private PresenceStatus status;
-        private LocalDateTime lastSeen;
-        private LocalDateTime unseenSince;
+        private volatile PresenceStatus status;
+        private volatile Instant lastSeen;
+        private volatile Instant unseenSince;
     }
 }

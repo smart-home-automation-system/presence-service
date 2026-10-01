@@ -6,7 +6,6 @@ import cloud.cholewa.presence.model.PresenceDecision.Changed;
 import cloud.cholewa.presence.model.PresenceDecision.Confirmed;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -18,7 +17,6 @@ import java.time.LocalDateTime;
 import static cloud.cholewa.presence.model.PresenceStatus.ABSENT;
 import static cloud.cholewa.presence.model.PresenceStatus.PRESENT;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -49,26 +47,24 @@ class PresenceStatusStoreTest {
         final PresenceStatusEntity row = new PresenceStatusEntity(null, "Anna", PRESENT, T0, T0);
         when(presenceStatusRepository.save(row)).thenReturn(Mono.just(row));
 
-        sut.apply(new Changed("Anna", PRESENT, T0, null, T0)).as(StepVerifier::create).verifyComplete();
+        sut.apply(new Changed("Anna", PRESENT, T0, T0)).as(StepVerifier::create).verifyComplete();
 
         verify(presenceStatusRepository).save(row);
         verify(presenceStatusRepository, never()).touchLatest(any(), any());
     }
 
-    //a member who left: the PRESENT row ends at the last sighting, the ABSENT row starts there and
-    //carries the time of the pass that decided it
+    //a member who left: the ABSENT row starts at the last sighting and carries the time of the pass
+    //that decided it; the PRESENT row is left alone - its last check already is the last sighting
     @Test
-    void should_end_the_previous_row_before_inserting_the_new_one() {
+    void should_insert_the_absence_starting_at_the_last_sighting() {
         final LocalDateTime decidedAt = T0.plusMinutes(11);
         final PresenceStatusEntity row = new PresenceStatusEntity(null, "Anna", ABSENT, T0, decidedAt);
-        when(presenceStatusRepository.touchLatest("Anna", T0)).thenReturn(Mono.just(1));
         when(presenceStatusRepository.save(row)).thenReturn(Mono.just(row));
 
-        sut.apply(new Changed("Anna", ABSENT, T0, T0, decidedAt)).as(StepVerifier::create).verifyComplete();
+        sut.apply(new Changed("Anna", ABSENT, T0, decidedAt)).as(StepVerifier::create).verifyComplete();
 
-        final InOrder inOrder = inOrder(presenceStatusRepository);
-        inOrder.verify(presenceStatusRepository).touchLatest("Anna", T0);
-        inOrder.verify(presenceStatusRepository).save(row);
+        verify(presenceStatusRepository).save(row);
+        verify(presenceStatusRepository, never()).touchLatest(any(), any());
     }
 
     @Test

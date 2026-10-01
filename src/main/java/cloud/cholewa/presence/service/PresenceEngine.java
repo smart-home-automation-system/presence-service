@@ -13,7 +13,6 @@ import reactor.core.publisher.Mono;
 
 import java.time.Clock;
 import java.time.Duration;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
@@ -25,6 +24,8 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class PresenceEngine {
+
+    private static final Duration PASS_TIMEOUT = Duration.ofSeconds(50);
 
     private final UnifiClient unifiClient;
     private final HouseholdClient householdClient;
@@ -48,9 +49,13 @@ public class PresenceEngine {
         return restored
             .then(Mono.zip(connectedMacAddresses(), activeMembers()))
             .flatMapMany(observed -> Flux.fromIterable(presenceTracker.evaluate(
-                LocalDateTime.now(clock), observed.getT2(), observed.getT1())))
+                clock.instant(), observed.getT2(), observed.getT1())))
             .concatMap(this::store)
             .then()
+            //the passes run one after another (fixedDelay), so a call that never answers - a query
+            //on a broken pooled connection, as in the 2026-09-26 outage of database-service - would
+            //stop the detection for good; bounded, it costs one pass
+            .timeout(PASS_TIMEOUT)
             .onErrorResume(e -> {
                 log.warn("Presence pass skipped, the state is kept: {}", e.getMessage());
                 return Mono.empty();

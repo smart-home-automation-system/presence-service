@@ -11,11 +11,13 @@ import java.time.LocalDateTime;
 
 public interface PresenceStatusRepository extends R2dbcRepository<PresenceStatusEntity, Long> {
 
-    //the latest row of every member - the current state, read once at startup
+    //the latest row of every member - the current state, read once at startup. "Latest" is the
+    //highest id, not the latest started_at: rows are inserted in the order the statuses changed,
+    //while started_at is local time and can run backwards on the night the clocks go back
     @Query("""
         SELECT DISTINCT ON (member_name) *
         FROM presence_status
-        ORDER BY member_name, started_at DESC, id DESC
+        ORDER BY member_name, id DESC
         """)
     Flux<PresenceStatusEntity> findLatestPerMember();
 
@@ -28,7 +30,7 @@ public interface PresenceStatusRepository extends R2dbcRepository<PresenceStatus
         WHERE id = (SELECT id
                     FROM presence_status
                     WHERE member_name = :memberName
-                    ORDER BY started_at DESC, id DESC
+                    ORDER BY id DESC
                     LIMIT 1)
         """)
     Mono<Integer> touchLatest(String memberName, LocalDateTime checkedAt);

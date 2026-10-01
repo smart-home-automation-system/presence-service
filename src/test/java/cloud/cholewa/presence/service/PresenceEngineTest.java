@@ -62,7 +62,7 @@ class PresenceEngineTest {
         sut = new PresenceEngine(
             unifiClient,
             householdClient,
-            new PresenceTracker(new PresenceProperties(Duration.ofMinutes(10))),
+            new PresenceTracker(new PresenceProperties(Duration.ofMinutes(10)), clock),
             presenceStatusStore,
             clock
         );
@@ -78,7 +78,7 @@ class PresenceEngineTest {
         detectAt(T0);
         detectAt(T0.plusMinutes(1));
 
-        verify(presenceStatusStore).apply(new Changed("Anna", PRESENT, T0, null, T0));
+        verify(presenceStatusStore).apply(new Changed("Anna", PRESENT, T0, T0));
         verify(presenceStatusStore).apply(new Confirmed("Anna", PRESENT, T0.plusMinutes(1)));
     }
 
@@ -90,7 +90,9 @@ class PresenceEngineTest {
         detectAt(T0.plusMinutes(1));
         detectAt(T0.plusMinutes(11));
 
-        verify(presenceStatusStore).apply(new Changed("Anna", ABSENT, T0, T0, T0.plusMinutes(11)));
+        //the pass inside the grace period writes nothing
+        verify(presenceStatusStore, times(2)).apply(any());
+        verify(presenceStatusStore).apply(new Changed("Anna", ABSENT, T0, T0.plusMinutes(11)));
     }
 
     //one failed poll of the gateway must not turn everyone absent
@@ -179,14 +181,14 @@ class PresenceEngineTest {
     void should_store_the_other_members_and_repeat_the_decision_when_a_write_fails() {
         when(householdClient.getActiveMembers()).thenReturn(Mono.just(List.of(ANNA, JAN)));
         connected(PHONE);
-        final PresenceDecision annaArrives = new Changed("Anna", PRESENT, T0, null, T0);
+        final PresenceDecision annaArrives = new Changed("Anna", PRESENT, T0, T0);
         when(presenceStatusStore.apply(annaArrives)).thenReturn(Mono.error(new IllegalStateException("database down")));
 
         detectAt(T0);
-        verify(presenceStatusStore).apply(new Changed("Jan", ABSENT, T0, null, T0));
+        verify(presenceStatusStore).apply(new Changed("Jan", ABSENT, T0, T0));
 
         detectAt(T0.plusMinutes(1));
-        verify(presenceStatusStore).apply(new Changed("Anna", PRESENT, T0.plusMinutes(1), null, T0.plusMinutes(1)));
+        verify(presenceStatusStore).apply(new Changed("Anna", PRESENT, T0.plusMinutes(1), T0.plusMinutes(1)));
         verify(presenceStatusStore).apply(new Confirmed("Jan", ABSENT, T0.plusMinutes(1)));
     }
 
