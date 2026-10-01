@@ -66,7 +66,11 @@ review.
   leave as a plain 500. The site id is resolved once and cached; a failed lookup is not
   cached.
 - **The clients endpoint is paged by 200** and the home network already holds about 170
-  clients, so the paging is not theoretical.
+  clients, so the paging is not theoretical. Offset paging over a live list is not a
+  snapshot: a client that disconnects between two page fetches shifts the rest by one, so
+  one client can be skipped (or, on a connect, returned twice). The detection engine
+  (HAS-151) must not read a single missed pass as "left the network" — require more than one,
+  and de-duplicate by MAC.
 - **`responseTimeout` aborts one UniFi call, nothing more — today.** Once HAS-151 runs a
   detection pass on top of this client, check what a timeout cancels there (the
   `boiler-service` lesson).

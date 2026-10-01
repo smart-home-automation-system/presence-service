@@ -60,6 +60,7 @@ public class UnifiClient {
             }
         )
             .flatMapIterable(UnifiPage::data)
+            .filter(site -> site.id() != null)
             .filter(site -> unifiProperties.site().equalsIgnoreCase(site.name())
                 || unifiProperties.site().equalsIgnoreCase(site.internalReference()))
             .next()
@@ -100,6 +101,12 @@ public class UnifiClient {
                     ))
             )
             .bodyToMono(typeReference)
+            //a 200 that is valid JSON but not a page (an empty body, {} or an error object) decodes
+            //to a page without data - caught here, before it turns into a NullPointerException
+            //downstream of the error mapping below
+            .filter(page -> page.data() != null)
+            .switchIfEmpty(Mono.error(() -> new UnifiCallException(
+                HttpStatus.BAD_GATEWAY, "UniFi answer unreadable: no data")))
             //every failure leaves as a UnifiCallException - also the ones after the response headers
             //(a stall or a dropped connection in the middle of the body, an answer that is not the
             //expected JSON), which WebClient does not wrap in a WebClientRequestException

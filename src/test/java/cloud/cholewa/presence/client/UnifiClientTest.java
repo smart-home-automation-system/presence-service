@@ -237,6 +237,24 @@ class UnifiClientTest {
             .verifyErrorSatisfies(e -> assertStatus(e, HttpStatus.BAD_GATEWAY));
     }
 
+    //valid JSON, so the decoder is happy - but there is no page in it
+    @Test
+    void should_fail_with_502_when_answer_is_json_without_data() {
+        enqueueJson("{}");
+
+        sut.getConnectedClients().as(StepVerifier::create)
+            .verifyErrorSatisfies(e -> assertStatus(e, HttpStatus.BAD_GATEWAY));
+    }
+
+    @Test
+    void should_fail_with_502_when_clients_answer_is_json_without_data() {
+        enqueueJson(SITES);
+        enqueueJson("{\"statusCode\": 200, \"message\": \"unexpected\"}");
+
+        sut.getConnectedClients().as(StepVerifier::create)
+            .verifyErrorSatisfies(e -> assertStatus(e, HttpStatus.BAD_GATEWAY));
+    }
+
     @Test
     void should_fail_with_502_when_gateway_is_unreachable() {
         mockWebServer.close();
