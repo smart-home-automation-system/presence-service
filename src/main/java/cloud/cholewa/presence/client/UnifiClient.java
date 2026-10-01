@@ -1,6 +1,5 @@
 package cloud.cholewa.presence.client;
 
-import brave.Response;
 import cloud.cholewa.presence.config.UnifiProperties;
 import cloud.cholewa.presence.error.UnifiCallException;
 import cloud.cholewa.presence.model.ConnectedClient;
@@ -10,6 +9,7 @@ import cloud.cholewa.presence.model.unifi.UnifiPage;
 import io.netty.handler.timeout.ReadTimeoutException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -100,18 +100,34 @@ public class UnifiClient {
                     ))
             )
             .bodyToMono(typeReference)
-            //a read timeout means the gateway is there but slow; anything else on the request side
-            //(connect timeout, refused, TLS handshake) means it could not be reached at all
-            .onErrorMap(
-                WebClientRequestException.class, e -> e.getCause() instanceof ReadTimeoutException
-                    ? new UnifiCallException(
-                    HttpStatus.GATEWAY_TIMEOUT, "UniFi did not answer within " + unifiProperties.responseTimeout(), e)
-                    : new UnifiCallException(
-                    HttpStatus.BAD_GATEWAY,
-                    "UniFi unreachable: " + e.getMostSpecificCause().getClass().getSimpleName(),
-                    e
-                )
+            //every failure leaves as a UnifiCallException - also the ones after the response headers
+            //(a stall or a dropped connection in the middle of the body, an answer that is not the
+            //expected JSON), which WebClient does not wrap in a WebClientRequestException
+            .onErrorMap(e -> !(e instanceof UnifiCallException), this::toUnifiCallException);
+    }
+
+    private UnifiCallException toUnifiCallException(final Throwable throwable) {
+        final Throwable cause = NestedExceptionUtils.getMostSpecificCause(throwable);
+
+        //a read timeout means the gateway is there but slow - before the headers or in the body
+        if (cause instanceof ReadTimeoutException) {
+            return new UnifiCallException(
+                HttpStatus.GATEWAY_TIMEOUT,
+                "UniFi did not answer within " + unifiProperties.responseTimeout(),
+                throwable
             );
+        }
+
+        //anything else on the request side (connect timeout, refused, TLS handshake) means the
+        //gateway could not be reached at all
+        if (throwable instanceof WebClientRequestException) {
+            return new UnifiCallException(
+                HttpStatus.BAD_GATEWAY, "UniFi unreachable: " + cause.getClass().getSimpleName(), throwable);
+        }
+
+        //only the type is named - a decoding error quotes the body it could not read
+        return new UnifiCallException(
+            HttpStatus.BAD_GATEWAY, "UniFi answer unreadable: " + cause.getClass().getSimpleName(), throwable);
     }
 
     //count > 0 guards against looping forever on an empty page that still reports a larger total

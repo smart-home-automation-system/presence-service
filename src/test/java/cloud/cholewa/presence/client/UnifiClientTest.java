@@ -7,6 +7,7 @@ import lombok.SneakyThrows;
 import mockwebserver3.MockResponse;
 import mockwebserver3.MockWebServer;
 import mockwebserver3.RecordedRequest;
+import mockwebserver3.SocketEffect;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -200,6 +201,40 @@ class UnifiClientTest {
 
         sut.getConnectedClients().as(StepVerifier::create)
             .verifyErrorSatisfies(e -> assertStatus(e, HttpStatus.GATEWAY_TIMEOUT));
+    }
+
+    //the three cases below fail after the response headers arrived, where WebClient no longer
+    //wraps the failure in a WebClientRequestException
+    @Test
+    void should_fail_with_504_when_gateway_stalls_in_the_middle_of_the_body() {
+        mockWebServer.enqueue(new MockResponse.Builder()
+            .addHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+            .body(SITES)
+            .bodyDelay(RESPONSE_TIMEOUT.toMillis() * 5, TimeUnit.MILLISECONDS)
+            .build());
+
+        sut.getConnectedClients().as(StepVerifier::create)
+            .verifyErrorSatisfies(e -> assertStatus(e, HttpStatus.GATEWAY_TIMEOUT));
+    }
+
+    @Test
+    void should_fail_with_502_when_connection_is_dropped_in_the_middle_of_the_body() {
+        mockWebServer.enqueue(new MockResponse.Builder()
+            .addHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+            .body(SITES)
+            .onResponseBody(new SocketEffect.CloseSocket())
+            .build());
+
+        sut.getConnectedClients().as(StepVerifier::create)
+            .verifyErrorSatisfies(e -> assertStatus(e, HttpStatus.BAD_GATEWAY));
+    }
+
+    @Test
+    void should_fail_with_502_when_answer_is_not_the_expected_json() {
+        enqueueJson("<html><body>Sign in</body></html>");
+
+        sut.getConnectedClients().as(StepVerifier::create)
+            .verifyErrorSatisfies(e -> assertStatus(e, HttpStatus.BAD_GATEWAY));
     }
 
     @Test

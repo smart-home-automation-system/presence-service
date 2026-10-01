@@ -30,9 +30,10 @@ review.
 - Local run: `home,local` Spring profiles, port `6009` (Actuator `8009`); in-cluster port
   `6200`, Actuator `8200`.
 - No database and no broker. The `unifi.*` group is validated at bind time, so the service
-  does not start without `UNIFI_API_KEY` (never in `application.yaml` — the repo is public);
-  `UNIFI_HOST` overrides the `localhost` placeholder, in the cluster from the manifest in
-  `deployment-tools`.
+  does not start without `UNIFI_API_KEY` (never in `application.yaml` — the repo is public)
+  and `UNIFI_HOST`; in the cluster both come from the manifest in `deployment-tools`. Neither
+  has a default outside the `test` document on purpose: with a `localhost` default a pod that
+  lost the variable would become Ready and answer 502 on every call.
 - Spring Boot **4.1.1** — the first service past the org target of 4.1.0. The rule since
   HAS-149: a service takes the newest Boot together with the newest own libraries whenever it
   is worked on; the others follow with their next task.
@@ -58,8 +59,12 @@ review.
   as `502 UniFi unreachable: CertificateException` on every call.
 - **Errors of the gateway never carry its body.** `UnifiCallException` holds a status and a
   message built here: 502 for an error answer (a rejected key included), an unreachable
-  gateway or a foreign certificate, 504 for a read timeout, 500 for an unknown site. The
-  site id is resolved once and cached; a failed lookup is not cached.
+  gateway, a foreign certificate, a dropped connection or an undecodable answer, 504 for a
+  read timeout, 500 for an unknown site. The mapping has to catch **everything**, not only
+  `WebClientRequestException`: WebClient raises that one only up to the response headers,
+  and a stall or a drop in the middle of the body, or a `DecodingException`, would otherwise
+  leave as a plain 500. The site id is resolved once and cached; a failed lookup is not
+  cached.
 - **The clients endpoint is paged by 200** and the home network already holds about 170
   clients, so the paging is not theoretical.
 - **`responseTimeout` aborts one UniFi call, nothing more — today.** Once HAS-151 runs a

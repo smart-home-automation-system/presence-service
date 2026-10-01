@@ -61,7 +61,7 @@ The `unifi.*` group, validated at startup:
 
 | Property | Environment variable | Default | Purpose |
 |---|---|---|---|
-| `unifi.host` | `UNIFI_HOST` | `localhost` | Address of the UniFi gateway on the LAN; the real one is injected by the deployment |
+| `unifi.host` | `UNIFI_HOST` | — (required) | Address of the UniFi gateway on the LAN; not committed, injected by the deployment |
 | `unifi.api-key` | `UNIFI_API_KEY` | — (required) | API key, sent as `X-API-Key`. A secret: environment only, never committed, masked in the logs |
 | `unifi.site` | `UNIFI_SITE` | `Default` | Site name (or internal reference); its id is resolved once through the API |
 | `unifi.certificate-fingerprint` | `UNIFI_CERTIFICATE_FINGERPRINT` | set in `application.yaml` | SHA-256 fingerprint of the gateway's certificate |
@@ -100,6 +100,6 @@ Failures of the gateway are answered in the org error format:
 
 | Status | When |
 |---|---|
-| 502 | The gateway answered with an error (a rejected API key included), could not be reached, or presented a certificate other than the pinned one |
-| 504 | The gateway did not answer within `unifi.response-timeout` |
+| 502 | The gateway answered with an error (a rejected API key included), could not be reached, presented a certificate other than the pinned one, dropped the connection, or sent an answer that is not the expected JSON |
+| 504 | The gateway did not answer within `unifi.response-timeout` — before the response or in the middle of it |
 | 500 | No site matches `unifi.site` |

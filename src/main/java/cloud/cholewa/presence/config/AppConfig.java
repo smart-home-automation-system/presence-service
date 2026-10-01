@@ -22,7 +22,8 @@ import javax.net.ssl.SSLParameters;
 @EnableConfigurationProperties(UnifiProperties.class)
 public class AppConfig {
 
-    @Bean
+    //Spring infers only close() and shutdown() as destroy methods, so the pool is named explicitly
+    @Bean(destroyMethod = "dispose")
     ConnectionProvider unifiConnectionProvider() {
         return ConnectionProvider.builder("unifiConnectionProvider")
             .maxConnections(10)

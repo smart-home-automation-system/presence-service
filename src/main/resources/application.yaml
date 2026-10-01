@@ -47,8 +47,10 @@ logging:
   level:
     org.zalando.logbook: trace
     
+#host and api-key are deliberately absent: both are validated at startup, so a deployment
+#that forgot UNIFI_HOST or UNIFI_API_KEY fails with the name of the property instead of
+#running and answering 502
 unifi:
-  host: localhost
   site: Default
   certificate-fingerprint: "94:37:F6:2E:A1:15:F8:EF:D8:09:9D:2B:69:69:75:CC:A7:50:B3:49:6C:DD:BA:24:B8:6F:66:D3:5D:4B:3B:7F"
 
@@ -91,4 +93,5 @@ logging:
       console: ""
       
 unifi:
+  host: localhost
   api-key: test-key
