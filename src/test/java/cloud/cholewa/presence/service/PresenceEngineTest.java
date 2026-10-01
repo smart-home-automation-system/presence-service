@@ -87,10 +87,11 @@ class PresenceEngineTest {
         connected(PHONE);
         detectAt(T0);
         connected();
-        detectAt(T0.plusMinutes(1));
-        detectAt(T0.plusMinutes(11));
+        for (int minute = 1; minute <= 11; minute++) {
+            detectAt(T0.plusMinutes(minute));
+        }
 
-        //the pass inside the grace period writes nothing
+        //the passes inside the grace period write nothing
         verify(presenceStatusStore, times(2)).apply(any());
         verify(presenceStatusStore).apply(new Changed("Anna", ABSENT, T0, T0.plusMinutes(11)));
     }
@@ -111,6 +112,28 @@ class PresenceEngineTest {
         //arrival, nothing for the failed pass, then a plain confirmation
         verify(presenceStatusStore, times(2)).apply(any());
         verify(presenceStatusStore).apply(new Confirmed("Anna", PRESENT, T0.plusMinutes(2)));
+    }
+
+    //the member was missed once, then the gateway went away for half an hour: the first pass after
+    //the outage must not close the grace period on two observations
+    @Test
+    void should_not_store_absence_right_after_an_outage_inside_the_grace_period() {
+        connected(PHONE);
+        detectAt(T0);
+        connected();
+        detectAt(T0.plusMinutes(1));
+
+        when(unifiClient.getConnectedClients())
+            .thenReturn(Flux.error(new UnifiCallException(HttpStatus.BAD_GATEWAY, "UniFi unreachable")));
+        for (int minute = 2; minute <= 30; minute++) {
+            detectAt(T0.plusMinutes(minute));
+        }
+
+        connected();
+        detectAt(T0.plusMinutes(31));
+
+        //only the arrival was ever written
+        verify(presenceStatusStore, times(1)).apply(any());
     }
 
     //an outage of database-service is not a household without members

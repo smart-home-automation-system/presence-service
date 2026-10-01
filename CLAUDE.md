@@ -60,7 +60,10 @@ review.
   earlier, an outage of `database-service` falls back to that last list — an outage must not
   read as a household without members.
 - **Absence needs the grace period, counted from the first pass that missed the member** —
-  not from the last sighting. That is what keeps an outage of the gateway, a restart of the
+  not from the last sighting — **and it starts over when passes were skipped in between**
+  (two evaluated passes more than 3 minutes apart, `MAX_OBSERVATION_GAP`). The period is time
+  the member was watched and not seen; while the gateway was down nobody was looking. That is
+  what keeps an outage of the gateway — before or inside a grace period —, a restart of the
   service and a client skipped by the paging (see below) from turning anyone absent. While
   waiting, **nothing is written**: a PRESENT row is only ever checked by a pass that saw the
   member, so its `last_checked_at` is the last sighting — which is where the ABSENT row starts

@@ -65,29 +65,26 @@ class PresenceTrackerTest {
 
         //first missed at T0+1, so the grace period runs until T0+11
         assertThat(pass(T0.plusMinutes(1), NOBODY)).isEmpty();
-        assertThat(pass(T0.plusMinutes(10), NOBODY)).isEmpty();
+        assertThat(missedEveryMinute(2, 10)).isEmpty();
     }
 
     @Test
     void should_turn_absent_after_the_grace_period_starting_at_the_last_sighting() {
         passAndCommit(T0, Set.of(PHONE));
-        pass(T0.plusMinutes(1), NOBODY);
 
-        assertThat(pass(T0.plusMinutes(11), NOBODY))
+        assertThat(missedEveryMinute(1, 11))
             .containsExactly(new Changed("Anna", ABSENT, T0, T0.plusMinutes(11)));
     }
 
     @Test
     void should_stay_present_when_the_device_flaps_within_the_grace_period() {
         passAndCommit(T0, Set.of(PHONE));
-        pass(T0.plusMinutes(1), NOBODY);
-        pass(T0.plusMinutes(9), NOBODY);
+        missedEveryMinute(1, 9);
 
         //back before the grace period ran out - and the next disappearance starts a new one
         assertThat(pass(T0.plusMinutes(10), Set.of(PHONE)))
             .containsExactly(new Confirmed("Anna", PRESENT, T0.plusMinutes(10)));
-        assertThat(pass(T0.plusMinutes(11), NOBODY)).isEmpty();
-        assertThat(pass(T0.plusMinutes(20), NOBODY)).isEmpty();
+        assertThat(missedEveryMinute(11, 20)).isEmpty();
         assertThat(pass(T0.plusMinutes(21), NOBODY))
             .containsExactly(new Changed("Anna", ABSENT, T0.plusMinutes(10), T0.plusMinutes(21)));
     }
@@ -95,7 +92,7 @@ class PresenceTrackerTest {
     @Test
     void should_return_to_present_after_an_absence() {
         passAndCommit(T0, Set.of(PHONE));
-        pass(T0.plusMinutes(1), NOBODY);
+        missedEveryMinute(1, 10);
         passAndCommit(T0.plusMinutes(11), NOBODY);
 
         assertThat(pass(T0.plusMinutes(12), NOBODY)).containsExactly(new Confirmed("Anna", ABSENT, T0.plusMinutes(12)));
@@ -109,9 +106,36 @@ class PresenceTrackerTest {
     void should_not_turn_absent_on_the_first_pass_after_skipped_passes() {
         passAndCommit(T0, Set.of(PHONE));
 
-        assertThat(pass(T0.plusHours(1), NOBODY)).isEmpty();
-        assertThat(pass(T0.plusHours(1).plusMinutes(10), NOBODY))
-            .containsExactly(new Changed("Anna", ABSENT, T0, T0.plusHours(1).plusMinutes(10)));
+        assertThat(pass(T0.plusMinutes(60), NOBODY)).isEmpty();
+        assertThat(missedEveryMinute(61, 69)).isEmpty();
+        assertThat(pass(T0.plusMinutes(70), NOBODY))
+            .containsExactly(new Changed("Anna", ABSENT, T0, T0.plusMinutes(70)));
+    }
+
+    //the same outage, but it begins after the member was already missed once: the minute before it
+    //and the first pass after it are two observations, not a grace period
+    @Test
+    void should_start_the_grace_period_over_when_passes_were_skipped_inside_it() {
+        passAndCommit(T0, Set.of(PHONE));
+        pass(T0.plusMinutes(1), NOBODY);
+
+        //nothing ran between T0+1 and T0+30
+        assertThat(pass(T0.plusMinutes(30), NOBODY)).isEmpty();
+        assertThat(missedEveryMinute(31, 39)).isEmpty();
+        assertThat(pass(T0.plusMinutes(40), NOBODY))
+            .containsExactly(new Changed("Anna", ABSENT, T0, T0.plusMinutes(40)));
+    }
+
+    //one skipped pass is not an outage
+    @Test
+    void should_keep_the_grace_period_running_over_a_single_skipped_pass() {
+        passAndCommit(T0, Set.of(PHONE));
+        missedEveryMinute(1, 4);
+        //the pass at T0+5 was skipped
+        missedEveryMinute(6, 10);
+
+        assertThat(pass(T0.plusMinutes(11), NOBODY))
+            .containsExactly(new Changed("Anna", ABSENT, T0, T0.plusMinutes(11)));
     }
 
     //the status moves only when the write is confirmed, so a failed write is decided again
@@ -142,9 +166,10 @@ class PresenceTrackerTest {
     void should_start_the_grace_period_after_a_restart_for_a_restored_present_member() {
         sut.restore("Anna", PRESENT, T0);
 
-        assertThat(pass(T0.plusHours(3), NOBODY)).isEmpty();
-        assertThat(pass(T0.plusHours(3).plusMinutes(10), NOBODY))
-            .containsExactly(new Changed("Anna", ABSENT, T0, T0.plusHours(3).plusMinutes(10)));
+        assertThat(pass(T0.plusMinutes(180), NOBODY)).isEmpty();
+        assertThat(missedEveryMinute(181, 189)).isEmpty();
+        assertThat(pass(T0.plusMinutes(190), NOBODY))
+            .containsExactly(new Changed("Anna", ABSENT, T0, T0.plusMinutes(190)));
     }
 
     @Test
@@ -182,8 +207,9 @@ class PresenceTrackerTest {
         sut.evaluate(before.toInstant(), List.of(ANNA), Set.of(PHONE)).forEach(sut::commit);
 
         //first missed at 02:55 CEST; 02:04 CET on the wall clock is 14 real minutes after the sighting
-        assertThat(sut.evaluate(before.plusMinutes(5).toInstant(), List.of(ANNA), NOBODY)).isEmpty();
-        assertThat(sut.evaluate(before.plusMinutes(14).toInstant(), List.of(ANNA), NOBODY)).isEmpty();
+        for (int minute = 5; minute <= 14; minute++) {
+            assertThat(sut.evaluate(before.plusMinutes(minute).toInstant(), List.of(ANNA), NOBODY)).isEmpty();
+        }
 
         final List<PresenceDecision> decisions = sut.evaluate(before.plusMinutes(15).toInstant(), List.of(ANNA), NOBODY);
 
@@ -197,11 +223,21 @@ class PresenceTrackerTest {
         final ZonedDateTime seen = ZonedDateTime.of(2026, 3, 29, 1, 54, 0, 0, ZONE);
         sut.evaluate(seen.toInstant(), List.of(ANNA), Set.of(PHONE)).forEach(sut::commit);
 
-        assertThat(sut.evaluate(seen.plusMinutes(1).toInstant(), List.of(ANNA), NOBODY)).isEmpty();
-        //wall clock 03:01 - more than an hour later by the clock, 7 minutes in reality
-        assertThat(sut.evaluate(seen.plusMinutes(7).toInstant(), List.of(ANNA), NOBODY)).isEmpty();
+        //first missed at 01:55; by 03:04 on the wall clock only 10 real minutes have passed
+        for (int minute = 1; minute <= 10; minute++) {
+            assertThat(sut.evaluate(seen.plusMinutes(minute).toInstant(), List.of(ANNA), NOBODY)).isEmpty();
+        }
         assertThat(sut.evaluate(seen.plusMinutes(11).toInstant(), List.of(ANNA), NOBODY))
             .hasOnlyElementsOfType(Changed.class);
+    }
+
+    //one pass a minute without any device, from T0+fromMinute to T0+toMinute; answers the last one
+    private List<PresenceDecision> missedEveryMinute(final int fromMinute, final int toMinute) {
+        List<PresenceDecision> last = List.of();
+        for (int minute = fromMinute; minute <= toMinute; minute++) {
+            last = pass(T0.plusMinutes(minute), NOBODY);
+        }
+        return last;
     }
 
     private List<PresenceDecision> pass(final LocalDateTime now, final Set<String> connected) {

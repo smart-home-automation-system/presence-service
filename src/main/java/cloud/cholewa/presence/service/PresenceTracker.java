@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -34,6 +35,10 @@ import static cloud.cholewa.presence.model.PresenceStatus.PRESENT;
 @Component
 @RequiredArgsConstructor
 public class PresenceTracker {
+
+    //passes further apart than this were not consecutive: at least two in a row were skipped
+    //(the detection runs once a minute)
+    private static final Duration MAX_OBSERVATION_GAP = Duration.ofMinutes(3);
 
     private final PresenceProperties presenceProperties;
     private final Clock clock;
@@ -76,6 +81,9 @@ public class PresenceTracker {
 
     private Optional<PresenceDecision> evaluate(final Instant now, final Member member, final Set<String> connected) {
         final MemberState state = states.computeIfAbsent(member.name(), name -> new MemberState());
+        final boolean observedWithoutGap = state.lastEvaluated != null
+            && !now.isAfter(state.lastEvaluated.plus(MAX_OBSERVATION_GAP));
+        state.lastEvaluated = now;
 
         if (member.macAddresses().stream().anyMatch(connected::contains)) {
             state.lastSeen = now;
@@ -86,10 +94,12 @@ public class PresenceTracker {
         }
 
         if (state.status == PRESENT) {
-            //the grace period is counted from the first pass that missed the member, not from the
-            //last sighting: passes skipped during an outage of the gateway are not observations,
-            //and a single pass can miss a client anyway (paging over a live list)
-            if (state.unseenSince == null) {
+            //The grace period is time the member was actually watched and not seen. It starts
+            //with the first pass that missed them - not at the last sighting - and starts over
+            //when passes were skipped in between: while the gateway (or the registry, or the
+            //database) was down nobody was looking, so that time proves nothing. A single pass
+            //can miss a client anyway (paging over a live list).
+            if (state.unseenSince == null || !observedWithoutGap) {
                 state.unseenSince = now;
             }
             if (now.isBefore(state.unseenSince.plus(presenceProperties.absenceThreshold()))) {
@@ -117,5 +127,6 @@ public class PresenceTracker {
         private volatile PresenceStatus status;
         private volatile Instant lastSeen;
         private volatile Instant unseenSince;
+        private volatile Instant lastEvaluated;
     }
 }

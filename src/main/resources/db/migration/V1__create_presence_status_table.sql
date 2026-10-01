@@ -14,4 +14,8 @@ CREATE TABLE presence_status
 ALTER TABLE presence_status
     ADD CONSTRAINT presence_status_status_check CHECK (status IN ('PRESENT', 'ABSENT'));
 
+-- the latest row of a member is its highest id (read and updated by every pass)...
+CREATE INDEX presence_status_member_latest_idx ON presence_status (member_name, id DESC);
+
+-- ...while reports read a member's periods by time
 CREATE INDEX presence_status_member_started_idx ON presence_status (member_name, started_at DESC);
