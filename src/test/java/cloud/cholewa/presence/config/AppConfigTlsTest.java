@@ -14,7 +14,11 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.zalando.logbook.Logbook;
+import org.zalando.logbook.HeaderFilter;
+import org.zalando.logbook.core.DefaultCorrelationId;
+import org.zalando.logbook.core.DefaultHttpLogFormatter;
+import org.zalando.logbook.core.DefaultHttpLogWriter;
+import org.zalando.logbook.core.DefaultSink;
 import reactor.test.StepVerifier;
 
 import java.security.MessageDigest;
@@ -109,7 +113,13 @@ class AppConfigTlsTest {
         AppConfig appConfig = new AppConfig();
         WebClient webClient = appConfig.unifiWebClient(
             WebClient.builder(),
-            appConfig.unifiHttpClient(appConfig.unifiConnectionProvider(), Logbook.create(), properties),
+            appConfig.unifiHttpClient(
+                appConfig.unifiConnectionProvider(),
+                new DefaultCorrelationId(),
+                HeaderFilter.none(),
+                new DefaultSink(new DefaultHttpLogFormatter(), new DefaultHttpLogWriter()),
+                properties
+            ),
             properties
         );
 
