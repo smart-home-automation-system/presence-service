@@ -1,19 +1,14 @@
-package cloud.cholewa.presence.model.ubiquity;
+package cloud.cholewa.presence.model.unifi;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 import java.time.OffsetDateTime;
-import java.util.UUID;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record Client(
+public record NetworkClient(
     String type,
-    UUID id,
     String name,
-    OffsetDateTime connectedAt,
-    String ipAddress,
     String macAddress,
-    UUID uplinkDeviceId,
-    Access access
+    OffsetDateTime connectedAt
 ) {
 }

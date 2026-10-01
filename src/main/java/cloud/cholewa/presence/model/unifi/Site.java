@@ -1,4 +1,4 @@
-package cloud.cholewa.presence.model.ubiquity;
+package cloud.cholewa.presence.model.unifi;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
