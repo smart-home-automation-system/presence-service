@@ -83,7 +83,7 @@ skipped.
 |---|---|---|---|
 | `database.host` / `port` / `name` / `username` / `password` | `database-host`, `database-port`, `database-name`, `database-user`, `database-password` | local placeholders | The service's own PostgreSQL database; in the cluster from the `database` secret |
 | `spring.flyway.url` | `flyway-url` | built from `database.*` | JDBC URL for the migrations |
-| `database.pool.max-size` | — | `3` | This service's share of the connection budget of the managed database |
+| `database.pool.max-size` | — | `2` | This service's share of the connection budget of the managed database |
 | `registry.base-url` | `REGISTRY_BASE_URL` | `http://database-service:6200` (`http://localhost:6005` in `local`) | Where the household registry is read from |
 | `registry.response-timeout` | `REGISTRY_RESPONSE_TIMEOUT` | `PT5S` | Time allowed for one answer of `database-service` |
 | `presence.absence-threshold` | `PRESENCE_ABSENCE_THRESHOLD` | `PT10M` | How long every device of a member has to stay unseen before the member is absent |

@@ -24,9 +24,9 @@ database:
   password: ${database-password:dummyPassword}
   pool:
     # this service's share of the 22 backend connections the managed database allows
-    # (heating 8 / database 6 / water 4 / presence 3, 1 free); left out, the pool silently
-    # falls back to the library default of 4
-    max-size: 3
+    # (heating 8 / database 6 / water 4 / presence 2, 2 free for Flyway and tools); left out, the
+    # pool silently falls back to the library default of 4
+    max-size: 2
 
 server:
   port: 6200
