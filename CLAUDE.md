@@ -103,8 +103,13 @@ review.
   member's latest row (`touchLatest`). Keep it that way: a row per poll would be 1440 rows per
   member per day. The SQL (`DISTINCT ON`, the update of the latest row) was verified on a real
   PostgreSQL 17, but no test in the repository runs against a database.
-- **`database.pool.max-size` is 3**: 21 of the 22 backend connections of the managed database
-  are now allotted (heating 8 / database 6 / water 4 / presence 3), 1 is free.
+- **`database.pool.max-size` is 2** (3 until 0.3.0): 20 of the 22 backend connections of the
+  managed database are allotted (heating 8 / database 6 / water 4 / presence 2), 2 are free.
+  Two are enough here — the engine stores one member at a time (`concatMap`), the second
+  connection is for the health indicator. The free ones are not a luxury: Flyway takes a JDBC
+  connection at every start and a database tool opens one per session, and with a single spare
+  slot a few IDE queries exhausted the server (`53300 remaining connection slots are
+  reserved`, 2026-10-03).
 - **The gateway is logged without bodies, everything else with them.** One answer of the
   client list is tens of kilobytes every minute — above the 16 KB at which the container
   runtime splits a log line. `AppConfig` therefore builds a second `Logbook` for the UniFi
