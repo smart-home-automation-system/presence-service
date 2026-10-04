@@ -109,8 +109,8 @@ review.
   out, so day-by-day ranges do not count it twice. The parameters are bound with a pattern,
   not `ISO.DATE_TIME`, which accepts an offset and silently drops it (Spring still falls back
   to `LocalDateTime.parse`, so `T00:00` and fractions pass — an offset does not). The limit of
-  a year is a `Duration` of 366 days, because `plusYears` on a bound taken from the request
-  can overflow and throw. On the night the clocks go back a row can be stored with
+  a year is 366 calendar days counted on epoch days, because `plusYears` on a bound taken from
+  the request can overflow and throw (and Sonar rejects a `Duration` between local date-times). On the night the clocks go back a row can be stored with
   `last_checked_at` before `started_at`; the calculator does not repair that, the interval
   comes out as stored — HAS-153 has to guard its sums or the columns move to `TIMESTAMPTZ`. The status in the query
   is a literal, because nothing in the repository runs against a database; the SQL was run by

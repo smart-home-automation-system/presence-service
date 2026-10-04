@@ -15,7 +15,6 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.text.Collator;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
@@ -28,9 +27,8 @@ import java.util.function.Function;
 public class PresenceReportService {
 
     //the retention horizon of the history, a year - nothing older is kept, so nothing longer is
-    //answered. A duration and not plusYears(1): the bounds come straight from the request, and
-    //adding to a year at the edge of what LocalDateTime holds throws instead of answering 400
-    private static final Duration MAX_RANGE = Duration.ofDays(366);
+    //answered
+    private static final long MAX_RANGE_DAYS = 366;
     private static final Locale NAME_ORDER = Locale.forLanguageTag("pl");
 
     private final HouseholdClient householdClient;
@@ -58,9 +56,9 @@ public class PresenceReportService {
         if (!from.isBefore(to)) {
             return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "from must be before to"));
         }
-        if (Duration.between(from, to).compareTo(MAX_RANGE) > 0) {
+        if (isLongerThanMaxRange(from, to)) {
             return Mono.error(new ResponseStatusException(
-                HttpStatus.BAD_REQUEST, "The range must not be longer than " + MAX_RANGE.toDays() + " days"));
+                HttpStatus.BAD_REQUEST, "The range must not be longer than " + MAX_RANGE_DAYS + " days"));
         }
 
         //the newest row of the member is always the last one read, whatever the range
@@ -85,6 +83,16 @@ public class PresenceReportService {
             .map(members -> new PresenceReport(name, from, to, List.of()))
             .switchIfEmpty(Mono.error(() -> new ResponseStatusException(
                 HttpStatus.NOT_FOUND, "Unknown resident: " + name)));
+    }
+
+    //Counted in calendar days on the local dates, with the time of day deciding a range of exactly
+    //the limit. Not from.plusYears(1) or plusDays: the bounds come straight from the request, and
+    //adding to a date at the edge of what LocalDateTime holds throws instead of answering 400
+    private static boolean isLongerThanMaxRange(final LocalDateTime from, final LocalDateTime to) {
+        final long days = to.toLocalDate().toEpochDay() - from.toLocalDate().toEpochDay();
+
+        return days > MAX_RANGE_DAYS
+            || (days == MAX_RANGE_DAYS && to.toLocalTime().isAfter(from.toLocalTime()));
     }
 
     private static ResidentPresence toResidentPresence(
