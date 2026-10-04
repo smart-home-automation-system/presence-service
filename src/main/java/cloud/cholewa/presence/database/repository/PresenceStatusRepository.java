@@ -11,7 +11,10 @@ import java.time.LocalDateTime;
 
 public interface PresenceStatusRepository extends R2dbcRepository<PresenceStatusEntity, Long> {
 
-    //the latest row of every member - the current state, read once at startup. "Latest" is the
+    //the latest row of every member - the current state, read by the engine once at startup and by
+    //every request for the current presence. It walks the whole table, which stays small by design
+    //(a row per status change, a year of retention); should that change, read only the active
+    //names. "Latest" is the
     //highest id, not the latest started_at: rows are inserted in the order the statuses changed,
     //while started_at is local time and can run backwards on the night the clocks go back
     @Query("""

@@ -193,15 +193,36 @@ class PresenceReportServiceTest {
 
     @Test
     void should_reject_a_range_longer_than_a_year() {
-        sut.getReport("Anna", FROM, FROM.plusYears(1).plusSeconds(1)).as(StepVerifier::create)
+        sut.getReport("Anna", FROM, FROM.plusDays(366).plusSeconds(1)).as(StepVerifier::create)
+            .verifyErrorSatisfies(this::isBadRequest);
+
+        verifyNoInteractions(presenceStatusRepository, householdClient);
+    }
+
+    //the bounds come straight from the request: date arithmetic on a year at the edge of what
+    //LocalDateTime holds would throw, and the caller would get a 500 for a bad range
+    @Test
+    void should_reject_a_range_at_the_edge_of_the_calendar_instead_of_failing() {
+        sut.getReport("Anna", LocalDateTime.MIN, LocalDateTime.MAX).as(StepVerifier::create)
             .verifyErrorSatisfies(this::isBadRequest);
 
         verifyNoInteractions(presenceStatusRepository, householdClient);
     }
 
     @Test
-    void should_accept_a_range_of_exactly_a_year() {
-        final LocalDateTime to = FROM.plusYears(1);
+    void should_answer_a_valid_range_in_the_last_year_of_the_calendar() {
+        final LocalDateTime from = LocalDateTime.MAX.minusDays(1);
+        when(presenceStatusRepository.findForReport("Anna", from, LocalDateTime.MAX)).thenReturn(Flux.empty());
+        when(householdClient.getActiveMembers()).thenReturn(Mono.just(List.of(member("Anna"))));
+
+        sut.getReport("Anna", from, LocalDateTime.MAX).as(StepVerifier::create)
+            .expectNext(new PresenceReport("Anna", from, LocalDateTime.MAX, List.of()))
+            .verifyComplete();
+    }
+
+    @Test
+    void should_accept_a_range_of_a_whole_leap_year() {
+        final LocalDateTime to = FROM.plusDays(366);
         when(presenceStatusRepository.findForReport("Anna", FROM, to))
             .thenReturn(Flux.just(new PresenceStatusEntity(2L, "Anna", ABSENT, T0, T0)));
 

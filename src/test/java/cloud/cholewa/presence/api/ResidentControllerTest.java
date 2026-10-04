@@ -148,7 +148,8 @@ class ResidentControllerTest {
             .exchange()
             .expectStatus().isEqualTo(HttpStatus.BAD_GATEWAY)
             .expectBody()
-            .jsonPath("$.errors[0].message").isEqualTo("Household registry call failed")
-            .jsonPath("$.errors[0].details").isEqualTo("database-service answered: 500");
+            //nothing of what is behind this service leaves it: no service name, no failure class
+            .jsonPath("$.errors[0].message").isEqualTo("Household registry unavailable")
+            .jsonPath("$.errors[0].details").doesNotExist();
     }
 }

@@ -8,8 +8,9 @@ import org.springframework.http.HttpStatus;
 
 import java.util.Collections;
 
-//the registry is behind this service, so its failure is a bad gateway for the caller; the message
-//is built in HouseholdClient and never carries the body database-service answered with
+//the registry is behind this service, so its failure is a bad gateway for the caller. The answer
+//is a fixed message: this API is routed through the gateway, and the exception names the service
+//behind it, the failure class and the configured timeout - that goes to the log only
 @Slf4j
 public class RegistryCallExceptionProcessor implements ExceptionProcessor {
 
@@ -21,8 +22,7 @@ public class RegistryCallExceptionProcessor implements ExceptionProcessor {
             .httpStatus(HttpStatus.BAD_GATEWAY)
             .errors(Collections.singleton(
                 ErrorMessage.builder()
-                    .message("Household registry call failed")
-                    .details(throwable.getMessage())
+                    .message("Household registry unavailable")
                     .build()
             ))
             .build();

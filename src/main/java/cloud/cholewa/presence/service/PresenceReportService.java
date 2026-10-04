@@ -15,6 +15,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.text.Collator;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
@@ -26,8 +27,10 @@ import java.util.function.Function;
 @RequiredArgsConstructor
 public class PresenceReportService {
 
-    //the retention horizon of the history - nothing older is kept, so nothing longer is answered
-    private static final int MAX_RANGE_YEARS = 1;
+    //the retention horizon of the history, a year - nothing older is kept, so nothing longer is
+    //answered. A duration and not plusYears(1): the bounds come straight from the request, and
+    //adding to a year at the edge of what LocalDateTime holds throws instead of answering 400
+    private static final Duration MAX_RANGE = Duration.ofDays(366);
     private static final Locale NAME_ORDER = Locale.forLanguageTag("pl");
 
     private final HouseholdClient householdClient;
@@ -55,9 +58,9 @@ public class PresenceReportService {
         if (!from.isBefore(to)) {
             return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "from must be before to"));
         }
-        if (from.plusYears(MAX_RANGE_YEARS).isBefore(to)) {
+        if (Duration.between(from, to).compareTo(MAX_RANGE) > 0) {
             return Mono.error(new ResponseStatusException(
-                HttpStatus.BAD_REQUEST, "The range must not be longer than " + MAX_RANGE_YEARS + " year"));
+                HttpStatus.BAD_REQUEST, "The range must not be longer than " + MAX_RANGE.toDays() + " days"));
         }
 
         //the newest row of the member is always the last one read, whatever the range

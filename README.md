@@ -137,11 +137,11 @@ device on the network and stays inside.
 **The report.**
 
 - `{name}` is the member's name in the registry, percent-encoded when needed. `from` and `to`
-  are both required, local date-times to the second and without an offset
-  (`2026-10-01T00:00:00`), read in the zone the service runs in — the same local time the
-  history is stored in. Anything else, a value with `Z` or an offset included, is answered
-  with 400 rather than read with the offset dropped. `from` has to lie before `to`, and the
-  range may span at most one year (the retention horizon).
+  are both required, local date-times without an offset (`2026-10-01T00:00:00`), read in the
+  zone the service runs in — the same local time the history is stored in. A date alone, or a
+  value with `Z` or an offset, is answered with 400 rather than read with the offset dropped.
+  `from` has to lie before `to`, and the range may span at most 366 days (the retention
+  horizon of a year).
 - The range includes its start and excludes its end, so adjacent ranges (day by day) never
   report the same moment twice.
 - An interval is a stored period of presence, cut to the range. It ends at the last moment the
@@ -173,8 +173,8 @@ Errors are answered in the org error format:
 
 | Status | When |
 |---|---|
-| 400 | `from` or `to` missing or not a local date-time, `from` not before `to`, or a range longer than one year |
+| 400 | `from` or `to` missing or not a local date-time, `from` not before `to`, or a range longer than 366 days |
 | 404 | The resident has no history and is not an active member of the registry |
-| 502 | The household registry in `database-service` could not be read — always for the current presence, for a report only when the resident has no history. On `/clients`: the gateway answered with an error (a rejected API key included), could not be reached, presented a certificate other than the pinned one, dropped the connection, or sent an answer that is not the expected JSON |
+| 502 | The household registry in `database-service` could not be read — always for the current presence, for a report only when the resident has no history; answered with a fixed message, the cause is in the log only. On `/clients`: the gateway answered with an error (a rejected API key included), could not be reached, presented a certificate other than the pinned one, dropped the connection, or sent an answer that is not the expected JSON |
 | 504 | `/clients`: the gateway did not answer within `unifi.response-timeout` — before the response or in the middle of it |
 | 500 | `/clients`: no site matches `unifi.site` |

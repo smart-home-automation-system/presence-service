@@ -31,7 +31,9 @@ public class ResidentController {
 
     //a resident is identified by their name, the key of the registry; from and to are local
     //date-times without an offset (2026-10-01T00:00:00), read in the zone the service runs in.
-    //A pattern instead of ISO.DATE_TIME, which takes an offset as well and silently drops it
+    //A pattern instead of ISO.DATE_TIME, which takes an offset as well and silently drops it. Spring
+    //still falls back to LocalDateTime.parse, so a value without seconds or with fractions is read
+    //too - both are local date-times; what matters is that an offset or a zone is a 400
     @GetMapping("/{name}/report")
     Mono<PresenceReport> getReport(
         @PathVariable final String name,
