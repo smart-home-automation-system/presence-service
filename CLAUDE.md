@@ -5,7 +5,8 @@ carry as they appear on and disappear from the home Wi-Fi, read from the UniFi N
 a resident counts as present while at least one of their registered devices is seen on the
 network. Built under the *Household presence monitoring* epic (HAS-147) — HAS-148 created
 the skeleton, HAS-149 added the UniFi client, HAS-151 the detection engine with its own
-database; the reporting API and the retention job arrive in HAS-152…HAS-154.
+database, HAS-152 the first reporting API (current presence, per-resident report); the
+statistics and the retention job arrive in HAS-153 and HAS-154.
 
 Part of the smart-home-automation-system organization — org-wide conventions, the
 repository map and working rules come from the workspace-level context
@@ -18,9 +19,9 @@ review.
 - Talks to: the UniFi Network Integration API on the gateway (outbound, HTTPS over the LAN)
   and `database-service` over k8s DNS (`GET /home/household`, the household registry). Both
   are polled once a minute. Nothing calls this service yet — it has **no route in
-  `api-gateway-service`** on purpose: the only endpoint, `GET /home/presence/clients`, is
-  diagnostic and lists the MAC addresses of every device on the network. The route arrives
-  with the real API (HAS-152). No RabbitMQ.
+  `api-gateway-service`**. When the route is added it covers `/home/presence/residents/**`
+  only: `GET /home/presence/clients` is diagnostic, lists the MAC addresses of every device on
+  the network and must stay unreachable from outside. No RabbitMQ.
 - Owns the presence history in its own database (`home-automation-presence`); the members and
   their devices stay in `database-service` and are never copied here.
 - Uses libraries: `cholewa-commons` and `smart-home-sdk` — the latter only for the registry
@@ -79,6 +80,39 @@ review.
   simply stops being checked, and if they return, a new row is opened. A reader of "current
   presence" must therefore combine the latest row with the active registry, or look at how old
   `last_checked_at` is.
+- **The reporting API reads, it never asks the tracker** (`ResidentController` →
+  `PresenceReportService`). Current presence is the latest row of every **active** member of
+  the registry, so it needs `database-service` and answers 502 without it — the engine's
+  last-known registry is deliberately not reused, the answer would silently be stale. A report
+  asks the registry only for a resident without any row (empty report for an active member, 404
+  otherwise), so a history is answered while the registry is down, also for a member who left.
+- **Intervals come from `PresenceIntervalCalculator` alone** — a plain class like the tracker;
+  HAS-153 is meant to reuse it, not to re-derive. A PRESENT row is the period `started_at` …
+  `last_checked_at` for a closed row as well (that is the last sighting, where the absence
+  starts), cut to the range; nothing is added between rows. `open` is the member's latest row,
+  and only when its last check lies inside the range. It means "nothing closed this period",
+  not "watched right now": the row of a member who left the registry while present stays open
+  forever, and the calculator cannot know — it has no clock on purpose. One thing the task did
+  not foresee: an outage **inside** a presence is not a gap — after the restart the same row
+  is confirmed again, so it reads as one continuous interval. A gap shows only when the status
+  changed across the outage.
+- **A report is read with one statement** (`findForReport`): the periods touching the range
+  plus the member's newest row, which is always the last one answered and tells which period
+  is open; no row at all means no history. Read as two queries, a status stored in between
+  made them disagree. The range rule in the SQL is only a pre-filter — the calculator owns it
+  and is what the tests exercise; change the rule there first and keep the SQL at least as
+  wide.
+- **The range of a report is local date-time, compared as it is** with the stored local times
+  (no zone conversion; the clock-change hour is ambiguous here as everywhere in the table). It
+  is closed at its start and open at its end; a period that ended exactly at the start is left
+  out, so day-by-day ranges do not count it twice. The parameters are bound with a pattern,
+  not `ISO.DATE_TIME`, which accepts an offset and silently drops it. The status in the query
+  is a literal, because nothing in the repository runs against a database; the SQL was run by
+  hand against the real one.
+- **The API shares the pool of 2 with the engine and the health indicator**, and its queries
+  have no timeout of their own beyond the pool's acquire and validation bounds. Fine for a
+  handful of requests; a frontend polling per open profile is the moment to give the service a
+  third connection (the budget has room) rather than to find out from skipped passes.
 - **The passes run with `fixedDelay` and a 50 s timeout.** For a method returning a `Mono`
   Spring waits for the previous run only with a fixed delay; at a fixed rate a slow pass
   overlaps the next one and both store the same change. The timeout is what keeps a call that
@@ -103,8 +137,8 @@ review.
   member's latest row (`touchLatest`). Keep it that way: a row per poll would be 1440 rows per
   member per day. The SQL (`DISTINCT ON`, the update of the latest row) was verified on a real
   PostgreSQL 17, but no test in the repository runs against a database.
-- **`database.pool.max-size` is 2** (3 until 0.3.0): 20 of the 22 backend connections of the
-  managed database are allotted (heating 8 / database 6 / water 4 / presence 2), 2 are free.
+- **`database.pool.max-size` is 2** (3 until 0.3.0): 16 of the 22 backend connections of the
+  managed database are allotted (heating 4 / database 6 / water 4 / presence 2), 6 are free.
   Two are enough here — the engine stores one member at a time (`concatMap`), the second
   connection is for the health indicator. The free ones are not a luxury: Flyway takes a JDBC
   connection at every start and a database tool opens one per session, and with a single spare

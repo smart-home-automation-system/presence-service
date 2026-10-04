@@ -31,9 +31,10 @@ carry — phones, watches — as they appear on and disappear from the home Wi-F
 **UniFi Network API**; a resident counts as present while at least one of their registered
 devices is seen on the network.
 
-**Status: presence is detected and stored, not yet reported.** Every minute the service reads
-the clients connected to the home network from the UniFi gateway, matches them against the
-devices of the active household members and records who is at home. The reporting API and the
+**Status: presence is detected, stored and reported per resident.** Every minute the service
+reads the clients connected to the home network from the UniFi gateway, matches them against
+the devices of the active household members and records who is at home. The API answers who is
+at home now and when one resident was; the daily statistics, the whole-home report and the
 history retention job arrive with the remaining tasks of the *Household presence monitoring*
 epic. The household members and their devices are kept by `database-service`, not here — this
 service reads that registry and owns only the presence history.
@@ -123,16 +124,57 @@ unavailable, the legacy
 ## API
 
 Base path `/home/presence` (`spring.webflux.base-path`). The service has **no route in
-`api-gateway-service`**, so nothing here is reachable from outside the cluster.
+`api-gateway-service` yet**, so nothing here is reachable from outside the cluster. The route
+is meant for `/home/presence/residents/**` only — `/clients` lists the MAC address of every
+device on the network and stays inside.
 
 | Method | Path | Description |
 |---|---|---|
+| GET | `/home/presence/residents/presence` | Who is at home now: every **active** member of the registry, ordered by name (Polish collation) — `name`, `present`, `since` (start of the current status), `lastCheckedAt` (the last pass that confirmed it, i.e. how fresh the answer is). A member nothing is stored for yet is listed with `present: false` and both times `null` |
+| GET | `/home/presence/residents/{name}/report?from=&to=` | When one resident was at home within a range: `name`, `from`, `to` and `intervals` (`from`, `to`, `open`), oldest first |
 | GET | `/home/presence/clients` | Diagnostic: the clients currently connected to the network — `macAddress` (lowercase), `name`, `type` (`WIRED`, `WIRELESS`, …), `connectedAt`. Clients without a MAC address (VPN, Teleport) are left out |
 
-Failures of the gateway are answered in the org error format:
+**The report.**
+
+- `{name}` is the member's name in the registry, percent-encoded when needed. `from` and `to`
+  are both required, local date-times to the second and without an offset
+  (`2026-10-01T00:00:00`), read in the zone the service runs in — the same local time the
+  history is stored in. Anything else, a value with `Z` or an offset included, is answered
+  with 400 rather than read with the offset dropped. `from` has to lie before `to`, and the
+  range may span at most one year (the retention horizon).
+- The range includes its start and excludes its end, so adjacent ranges (day by day) never
+  report the same moment twice.
+- An interval is a stored period of presence, cut to the range. It ends at the last moment the
+  resident was seen; `open: true` marks the last period of the history when nothing closed it,
+  whose end is the last check and not a departure. A period the range cuts off at its end is
+  not marked open — its end is the edge of the range. Open does not promise the resident is
+  being watched right now: for a member who left the registry, or while the detection is down,
+  the end of the interval simply stops moving — compare it with the clock.
+- Nothing is interpolated. Time the service did not watch (it was down, or the gateway was)
+  shows as a gap between intervals when the status changed across it; a period of presence that
+  simply continued after the outage is one interval.
+- The history is answered for anyone who has one, also a member who has since left the
+  registry. A resident with no history is answered with an empty `intervals` list when they
+  are an active member, and with 404 otherwise.
+
+```json
+{
+  "name": "Anna",
+  "from": "2026-10-03T00:00:00",
+  "to": "2026-10-05T00:00:00",
+  "intervals": [
+    { "from": "2026-10-03T00:00:00", "to": "2026-10-03T08:10:00", "open": false },
+    { "from": "2026-10-03T17:45:00", "to": "2026-10-04T12:00:00", "open": true }
+  ]
+}
+```
+
+Errors are answered in the org error format:
 
 | Status | When |
 |---|---|
-| 502 | The gateway answered with an error (a rejected API key included), could not be reached, presented a certificate other than the pinned one, dropped the connection, or sent an answer that is not the expected JSON |
-| 504 | The gateway did not answer within `unifi.response-timeout` — before the response or in the middle of it |
-| 500 | No site matches `unifi.site` |
+| 400 | `from` or `to` missing or not a local date-time, `from` not before `to`, or a range longer than one year |
+| 404 | The resident has no history and is not an active member of the registry |
+| 502 | The household registry in `database-service` could not be read — always for the current presence, for a report only when the resident has no history. On `/clients`: the gateway answered with an error (a rejected API key included), could not be reached, presented a certificate other than the pinned one, dropped the connection, or sent an answer that is not the expected JSON |
+| 504 | `/clients`: the gateway did not answer within `unifi.response-timeout` — before the response or in the middle of it |
+| 500 | `/clients`: no site matches `unifi.site` |
