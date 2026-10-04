@@ -1,7 +1,9 @@
 package cloud.cholewa.presence.config;
 
 import cloud.cholewa.commons.error.GlobalErrorExceptionHandler;
+import cloud.cholewa.presence.error.RegistryCallException;
 import cloud.cholewa.presence.error.UnifiCallException;
+import cloud.cholewa.presence.error.processor.RegistryCallExceptionProcessor;
 import cloud.cholewa.presence.error.processor.UnifiCallExceptionProcessor;
 import org.springframework.boot.autoconfigure.web.WebProperties;
 import org.springframework.boot.webflux.error.ErrorAttributes;
@@ -27,9 +29,10 @@ public class ExceptionHandlerConfig {
         GlobalErrorExceptionHandler globalErrorExceptionHandler = new GlobalErrorExceptionHandler(
             errorAttributes, webProperties.getResources(), applicationContext, serverCodecConfigurer);
 
-        globalErrorExceptionHandler.withCustomErrorProcessor(
-            Map.of(UnifiCallException.class, new UnifiCallExceptionProcessor())
-        );
+        globalErrorExceptionHandler.withCustomErrorProcessor(Map.of(
+            UnifiCallException.class, new UnifiCallExceptionProcessor(),
+            RegistryCallException.class, new RegistryCallExceptionProcessor()
+        ));
 
         return globalErrorExceptionHandler;
     }
