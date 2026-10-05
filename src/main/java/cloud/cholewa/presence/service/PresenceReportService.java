@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 
 //The read side of the presence history: who is at home now and when one resident was.
@@ -26,9 +27,6 @@ import java.util.function.Function;
 @RequiredArgsConstructor
 public class PresenceReportService {
 
-    //the retention horizon of the history, a year - nothing older is kept, so nothing longer is
-    //answered
-    private static final long MAX_RANGE_DAYS = 366;
     private static final Locale NAME_ORDER = Locale.forLanguageTag("pl");
 
     private final HouseholdClient householdClient;
@@ -53,21 +51,26 @@ public class PresenceReportService {
 
     //The range is local time, like the stored rows, so it is compared as it is.
     public Mono<PresenceReport> getReport(final String name, final LocalDateTime from, final LocalDateTime to) {
-        if (!from.isBefore(to)) {
-            return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "from must be before to"));
-        }
-        if (isLongerThanMaxRange(from, to)) {
-            return Mono.error(new ResponseStatusException(
-                HttpStatus.BAD_REQUEST, "The range must not be longer than " + MAX_RANGE_DAYS + " days"));
+        return readHistory(name, from, to).map(ResidentHistory::report);
+    }
+
+    //The report together with the last check of the resident - where what is known about them ends,
+    //which the statistics need and the report itself does not answer.
+    Mono<ResidentHistory> readHistory(final String name, final LocalDateTime from, final LocalDateTime to) {
+        final Optional<ResponseStatusException> violation = ReportRange.violation(from, to);
+        if (violation.isPresent()) {
+            return Mono.error(violation.get());
         }
 
         //the newest row of the member is always the last one read, whatever the range
         return presenceStatusRepository.findForReport(name, from, to)
             .collectList()
             .flatMap(rows -> rows.isEmpty()
-                ? reportWithoutHistory(name, from, to)
-                : Mono.just(new PresenceReport(
-                    name, from, to, presenceIntervalCalculator.derive(rows, rows.getLast().id(), from, to))));
+                ? reportWithoutHistory(name, from, to).map(report -> new ResidentHistory(report, null))
+                : Mono.just(new ResidentHistory(
+                    new PresenceReport(
+                        name, from, to, presenceIntervalCalculator.derive(rows, rows.getLast().id(), from, to)),
+                    rows.getLast().lastCheckedAt())));
     }
 
     //No row at all: an active member the engine has not stored yet has an empty report, anyone else
@@ -85,16 +88,6 @@ public class PresenceReportService {
                 HttpStatus.NOT_FOUND, "Unknown resident: " + name)));
     }
 
-    //Counted in calendar days on the local dates, with the time of day deciding a range of exactly
-    //the limit. Not from.plusYears(1) or plusDays: the bounds come straight from the request, and
-    //adding to a date at the edge of what LocalDateTime holds throws instead of answering 400
-    private static boolean isLongerThanMaxRange(final LocalDateTime from, final LocalDateTime to) {
-        final long days = to.toLocalDate().toEpochDay() - from.toLocalDate().toEpochDay();
-
-        return days > MAX_RANGE_DAYS
-            || (days == MAX_RANGE_DAYS && to.toLocalTime().isAfter(from.toLocalTime()));
-    }
-
     private static ResidentPresence toResidentPresence(
         final String name,
         final Map<String, PresenceStatusEntity> latestRows
@@ -105,5 +98,9 @@ public class PresenceReportService {
             ? new ResidentPresence(name, false, null, null)
             : new ResidentPresence(
                 name, latest.status() == PresenceStatus.PRESENT, latest.startedAt(), latest.lastCheckedAt());
+    }
+
+    //lastCheckedAt is null for a resident nothing is stored for yet
+    record ResidentHistory(PresenceReport report, LocalDateTime lastCheckedAt) {
     }
 }

@@ -1,8 +1,10 @@
 package cloud.cholewa.presence.api;
 
+import cloud.cholewa.presence.model.DailyPresenceReport;
 import cloud.cholewa.presence.model.PresenceReport;
 import cloud.cholewa.presence.model.ResidentPresence;
 import cloud.cholewa.presence.service.PresenceReportService;
+import cloud.cholewa.presence.service.PresenceStatisticsService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,9 +22,10 @@ import java.time.LocalDateTime;
 @RequiredArgsConstructor
 public class ResidentController {
 
-    private static final String LOCAL_DATE_TIME = "yyyy-MM-dd'T'HH:mm:ss";
+    static final String LOCAL_DATE_TIME = "yyyy-MM-dd'T'HH:mm:ss";
 
     private final PresenceReportService presenceReportService;
+    private final PresenceStatisticsService presenceStatisticsService;
 
     @GetMapping("/presence")
     Flux<ResidentPresence> getCurrentPresence() {
@@ -41,5 +44,14 @@ public class ResidentController {
         @RequestParam @DateTimeFormat(pattern = LOCAL_DATE_TIME) final LocalDateTime to
     ) {
         return presenceReportService.getReport(name, from, to);
+    }
+
+    @GetMapping("/{name}/report/daily")
+    Mono<DailyPresenceReport> getDailyReport(
+        @PathVariable final String name,
+        @RequestParam @DateTimeFormat(pattern = LOCAL_DATE_TIME) final LocalDateTime from,
+        @RequestParam @DateTimeFormat(pattern = LOCAL_DATE_TIME) final LocalDateTime to
+    ) {
+        return presenceStatisticsService.getDailyReport(name, from, to);
     }
 }
