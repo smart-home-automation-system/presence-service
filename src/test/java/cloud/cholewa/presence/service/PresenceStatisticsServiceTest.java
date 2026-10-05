@@ -60,10 +60,12 @@ class PresenceStatisticsServiceTest {
     @BeforeEach
     void setUp() {
         final Clock clock = Clock.fixed(Instant.parse("2026-10-07T10:00:00Z"), ZoneId.of("Europe/Warsaw"));
-        presenceTracker = new PresenceTracker(new PresenceProperties(Duration.ofMinutes(10)), clock);
+        final PresenceProperties properties = new PresenceProperties(Duration.ofMinutes(10), Duration.ofDays(365));
+        presenceTracker = new PresenceTracker(properties, clock);
         sut = new PresenceStatisticsService(
             presenceReportService, presenceStatusRepository,
-            new PresenceIntervalCalculator(), new PresenceStatisticsCalculator(clock), presenceTracker);
+            new PresenceIntervalCalculator(), new PresenceStatisticsCalculator(clock), presenceTracker,
+            properties, clock);
     }
 
     @Test
@@ -250,6 +252,39 @@ class PresenceStatisticsServiceTest {
             .expectNext(new HouseReport(FROM, TO, firstStart, TO,
                 List.of(new OccupancyInterval(firstStart, TO, true)),
                 List.of(new DailyOccupancy(MONDAY, 18 * HOUR, 0, false))))
+            .verifyComplete();
+    }
+
+    //Tom has been away for two years: one row, kept because it is checked every minute, starting
+    //long before the retention horizon. What Anna did back then was deleted since - so the report
+    //must not count from Tom's old start and call the purged days an empty house
+    @Test
+    void should_not_report_anything_before_the_retention_horizon_as_observed() {
+        final LocalDateTime now = LocalDateTime.of(2026, 10, 7, 12, 0);
+        final LocalDateTime horizon = now.minusDays(365);
+        final LocalDateTime from = horizon.minusDays(1);
+        final LocalDateTime to = horizon.plusHours(12);
+        final PresenceStatusEntity tom = new PresenceStatusEntity(1L, "Tom", ABSENT, horizon.minusDays(365), now);
+        observed(horizon.minusDays(365), now, tom);
+        when(presenceStatusRepository.findPresentBetween(from, to)).thenReturn(Flux.empty());
+
+        sut.getHouseReport(from, to).as(StepVerifier::create)
+            .assertNext(report -> {
+                assertThat(report.observedFrom()).isEqualTo(horizon);
+                assertThat(report.intervals()).containsExactly(new OccupancyInterval(horizon, to, false));
+                assertThat(report.days()).hasSize(1);
+            })
+            .verifyComplete();
+
+        when(presenceReportService.readHistory("Tom", from, to)).thenReturn(Mono.just(
+            new ResidentHistory(new PresenceReport("Tom", from, to, List.of()), now)));
+        when(presenceStatusRepository.findFirstStartOf("Tom")).thenReturn(Mono.just(horizon.minusDays(365)));
+
+        sut.getDailyReport("Tom", from, to).as(StepVerifier::create)
+            .assertNext(report -> {
+                assertThat(report.observedFrom()).isEqualTo(horizon);
+                assertThat(report.days()).hasSize(1);
+            })
             .verifyComplete();
     }
 

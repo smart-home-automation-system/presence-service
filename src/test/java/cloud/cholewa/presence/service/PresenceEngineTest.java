@@ -62,7 +62,7 @@ class PresenceEngineTest {
         sut = new PresenceEngine(
             unifiClient,
             householdClient,
-            new PresenceTracker(new PresenceProperties(Duration.ofMinutes(10)), clock),
+            new PresenceTracker(new PresenceProperties(Duration.ofMinutes(10), Duration.ofDays(365)), clock),
             presenceStatusStore,
             clock
         );

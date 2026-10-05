@@ -77,6 +77,9 @@ registry:
 
 presence:
   absence-threshold: PT10M
+  # history older than this (by the last check of a row) is deleted once a day
+  retention: P365D
+  retention-cron: "0 0 3 * * *"
 
 ---
 
@@ -125,6 +128,8 @@ unifi:
   host: localhost
   api-key: test-key
 
-#a context started by a test must not poll a gateway that is not there
+#a context started by a test must not poll a gateway that is not there, nor delete from a
+#database that is not there
 presence:
   detection-enabled: false
+  retention-cron: "-"

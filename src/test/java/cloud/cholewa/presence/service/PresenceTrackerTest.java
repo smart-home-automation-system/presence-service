@@ -37,7 +37,7 @@ class PresenceTrackerTest {
     void setUp() {
         //only the zone of the clock is used - the time of a pass is always passed in
         sut = new PresenceTracker(
-            new PresenceProperties(Duration.ofMinutes(10)), Clock.fixed(Instant.EPOCH, ZONE));
+            new PresenceProperties(Duration.ofMinutes(10), Duration.ofDays(365)), Clock.fixed(Instant.EPOCH, ZONE));
     }
 
     @Test

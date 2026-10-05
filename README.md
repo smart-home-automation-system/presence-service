@@ -35,8 +35,8 @@ devices is seen on the network.
 clients connected to the home network from the UniFi gateway, matches them against the devices
 of the active household members and records who is at home. The API answers who is at home
 now, when one resident was, their daily statistics and when the house as a whole was occupied
-or empty; the history retention job arrives with the last task of the *Household presence
-monitoring* epic. The household members and their devices are kept by `database-service`, not here — this
+or empty, and history older than a year is deleted every night — the whole scope of the
+*Household presence monitoring* epic. The household members and their devices are kept by `database-service`, not here — this
 service reads that registry and owns only the presence history.
 
 ## How presence is decided
@@ -58,6 +58,29 @@ service reads that registry and owns only the presence history.
   their last row stops being checked, so "who is at home now" is the latest row of each
   **active** member.
 - Exactly one instance may run — the current state is kept in memory.
+
+## History retention
+
+Once a day (`presence.retention-cron`, 03:00 in the zone the service runs in) the rows **last
+checked** more than `presence.retention` ago (365 days) are deleted, and the number is logged:
+`Presence history retention: N row(s) last checked before … deleted`.
+
+- A row goes by its last check, not by its start. The row a member is in right now is checked
+  every minute — after a year at home, or a year away — so it always survives; only the reports
+  cut it to the range they are asked for.
+- A member removed from the registry, or deactivated, is no longer checked: their last row,
+  and with it the rest of their history, goes one retention period after they left.
+- A purge that fails or does not answer within a minute logs an error with the exception and is
+  made up for by the next one. It does not touch the detection. (A statement the database was
+  still working on when the job gave up may complete all the same.)
+- **`presence.retention` is at least a week, and a bare number is days** — the service does not
+  start otherwise. A `Duration` without a unit would bind as milliseconds: `365` would put the
+  cutoff at "now" and the job would delete the whole table.
+- The reports answer at most 366 days, so a retention shorter than a year also shortens what
+  they can show. The statistics never count anything before the retention horizon as observed
+  (`observedFrom`), even when a long-running row starts before it; the plain interval report
+  has no such bound — there a purged stretch looks like an absence.
+- `presence.retention-cron: "-"` switches the job off.
 
 ## Run locally
 
@@ -87,6 +110,8 @@ skipped.
 | `database.pool.max-size` | — | `2` | This service's share of the connection budget of the managed database |
 | `registry.base-url` | `REGISTRY_BASE_URL` | `http://database-service:6200` (`http://localhost:6005` in `local`) | Where the household registry is read from |
 | `registry.response-timeout` | `REGISTRY_RESPONSE_TIMEOUT` | `PT5S` | Time allowed for one answer of `database-service` |
+| `presence.retention` | `PRESENCE_RETENTION` | `P365D` | How long the history is kept, counted from the last check of a row; at least `P7D`, a bare number is days |
+| `presence.retention-cron` | `PRESENCE_RETENTION_CRON` | `0 0 3 * * *` | When the old history is deleted (Spring cron, system zone); `-` switches it off |
 | `presence.absence-threshold` | `PRESENCE_ABSENCE_THRESHOLD` | `PT10M` | How long every device of a member has to stay unseen before the member is absent |
 
 The `unifi.*` group, validated at startup:

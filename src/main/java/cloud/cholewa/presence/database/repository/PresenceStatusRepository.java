@@ -29,7 +29,7 @@ public interface PresenceStatusRepository extends R2dbcRepository<PresenceStatus
     //so an empty answer means a member without a history. One statement on purpose: read apart, a
     //status stored in between would make the newest row and the periods disagree about what is
     //still going on. The range rule is only a pre-filter here, PresenceIntervalCalculator owns it.
-    //The status is a literal - nothing in the repository runs against a database, so the query does
+    //The status is a literal - no test runs this read against a database, so the query does
     //not lean on how an enum parameter is bound
     @Query("""
         SELECT *
@@ -68,6 +68,11 @@ public interface PresenceStatusRepository extends R2dbcRepository<PresenceStatus
     //where the history of one member starts; empty for a member nothing is stored for
     @Query("SELECT started_at FROM presence_status WHERE member_name = :memberName ORDER BY started_at LIMIT 1")
     Mono<LocalDateTime> findFirstStartOf(String memberName);
+
+    //the retention: every row last checked before the cutoff; answers how many were deleted
+    @Modifying
+    @Query("DELETE FROM presence_status WHERE last_checked_at < :cutoff")
+    Mono<Long> deleteLastCheckedBefore(LocalDateTime cutoff);
 
     //moves last_checked_at of the member's latest row; answers the number of rows changed, which is
     //0 when the member has no row yet

@@ -170,6 +170,19 @@
 			<artifactId>spring-boot-starter-webflux-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<!-- the repository slice for the one test that runs SQL: the retention delete, against an
+		     in-memory H2. Only portable statements can be tested this way - the PostgreSQL-only
+		     ones (DISTINCT ON) are still verified by hand against the real database -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-r2dbc-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.r2dbc</groupId>
+			<artifactId>r2dbc-h2</artifactId>
+			<scope>test</scope>
+		</dependency>
 		<dependency>
 			<groupId>com.squareup.okhttp3</groupId>
 			<artifactId>mockwebserver3</artifactId>

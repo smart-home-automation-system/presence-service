@@ -1,5 +1,6 @@
 package cloud.cholewa.presence.service;
 
+import cloud.cholewa.presence.config.PresenceProperties;
 import cloud.cholewa.presence.database.model.PresenceStatusEntity;
 import cloud.cholewa.presence.database.repository.PresenceStatusRepository;
 import cloud.cholewa.presence.model.DailyPresenceReport;
@@ -13,11 +14,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 
 //Aggregated reports on top of the intervals: the days of one resident and the occupancy of the
 //whole house. Both cover only what was observed - from the first stored status to the last check,
@@ -33,6 +37,8 @@ public class PresenceStatisticsService {
     private final PresenceIntervalCalculator presenceIntervalCalculator;
     private final PresenceStatisticsCalculator presenceStatisticsCalculator;
     private final PresenceTracker presenceTracker;
+    private final PresenceProperties presenceProperties;
+    private final Clock clock;
 
     //Built on the interval report, so the same rules decide who is known (404) and which range is
     //valid (400). A resident nothing is stored for has no day at all.
@@ -56,7 +62,7 @@ public class PresenceStatisticsService {
         final ResidentHistory history,
         final LocalDateTime firstStart
     ) {
-        final LocalDateTime observedFrom = firstStart.isAfter(from) ? firstStart : from;
+        final LocalDateTime observedFrom = observedFrom(from, firstStart);
         final LocalDateTime until = observedUntil(observedFrom, to, history.lastCheckedAt());
 
         return until == null
@@ -81,7 +87,7 @@ public class PresenceStatisticsService {
         return presenceStatusRepository.findFirstStart()
             .flatMap(firstStart -> presenceStatusRepository.findLastCheck()
                 .flatMap(lastCheck -> {
-                    final LocalDateTime observedFrom = firstStart.isAfter(from) ? firstStart : from;
+                    final LocalDateTime observedFrom = observedFrom(from, firstStart);
                     final LocalDateTime until = observedUntil(observedFrom, to, lastCheck);
 
                     return until == null
@@ -141,6 +147,17 @@ public class PresenceStatisticsService {
             .filter(row -> row.lastCheckedAt().isBefore(until))
             .map(row -> new PresenceInterval(row.lastCheckedAt(), until, true))
             .toList();
+    }
+
+    //Where the statistics of a range start: at the first stored status, but never before the
+    //retention horizon. The oldest row can start long before it - a row is kept as long as it is
+    //checked, so a year away is one row with an old start - while the rows around it that ended
+    //earlier are deleted. Counted from that old start, the purged stretch would read as observed
+    //and nobody at home.
+    private LocalDateTime observedFrom(final LocalDateTime from, final LocalDateTime firstStart) {
+        final LocalDateTime kept = LocalDateTime.now(clock).minus(presenceProperties.retention());
+
+        return Stream.of(from, firstStart, kept).max(Comparator.naturalOrder()).orElseThrow();
     }
 
     //where the statistics of a range end: at the last check, or at the end of the range when that
