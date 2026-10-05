@@ -43,6 +43,32 @@ public interface PresenceStatusRepository extends R2dbcRepository<PresenceStatus
         """)
     Flux<PresenceStatusEntity> findForReport(String memberName, LocalDateTime from, LocalDateTime to);
 
+    //the periods anyone was at home that touch the range, of every member - also of those who have
+    //left the registry since, because the house was occupied all the same. The same pre-filter as
+    //in findForReport; the table has no index by time alone and does not need one at its size
+    @Query("""
+        SELECT *
+        FROM presence_status
+        WHERE status = 'PRESENT'
+          AND started_at < :to
+          AND (last_checked_at > :from OR started_at >= :from)
+        ORDER BY id
+        """)
+    Flux<PresenceStatusEntity> findPresentBetween(LocalDateTime from, LocalDateTime to);
+
+    //Where the history starts and how far it reaches: the first status ever stored and the last
+    //pass that stored or confirmed anything. Both empty for an empty table - which is why they are
+    //not min() and max(): an aggregate answers one row holding NULL, and a null cannot be emitted
+    @Query("SELECT started_at FROM presence_status ORDER BY started_at LIMIT 1")
+    Mono<LocalDateTime> findFirstStart();
+
+    @Query("SELECT last_checked_at FROM presence_status ORDER BY last_checked_at DESC LIMIT 1")
+    Mono<LocalDateTime> findLastCheck();
+
+    //where the history of one member starts; empty for a member nothing is stored for
+    @Query("SELECT started_at FROM presence_status WHERE member_name = :memberName ORDER BY started_at LIMIT 1")
+    Mono<LocalDateTime> findFirstStartOf(String memberName);
+
     //moves last_checked_at of the member's latest row; answers the number of rows changed, which is
     //0 when the member has no row yet
     @Modifying

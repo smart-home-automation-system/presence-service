@@ -2,10 +2,13 @@ package cloud.cholewa.presence.api;
 
 import cloud.cholewa.presence.config.ExceptionHandlerConfig;
 import cloud.cholewa.presence.error.RegistryCallException;
+import cloud.cholewa.presence.model.DailyPresence;
+import cloud.cholewa.presence.model.DailyPresenceReport;
 import cloud.cholewa.presence.model.PresenceInterval;
 import cloud.cholewa.presence.model.PresenceReport;
 import cloud.cholewa.presence.model.ResidentPresence;
 import cloud.cholewa.presence.service.PresenceReportService;
+import cloud.cholewa.presence.service.PresenceStatisticsService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -20,6 +23,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.net.URI;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -40,6 +44,9 @@ class ResidentControllerTest {
 
     @MockitoBean
     private PresenceReportService presenceReportService;
+
+    @MockitoBean
+    private PresenceStatisticsService presenceStatisticsService;
 
     @Test
     void should_return_the_current_presence_of_every_resident() {
@@ -136,6 +143,48 @@ class ResidentControllerTest {
             .expectStatus().isBadRequest();
 
         verifyNoInteractions(presenceReportService);
+    }
+
+    @Test
+    void should_return_the_daily_report_of_a_resident() {
+        when(presenceStatisticsService.getDailyReport("Anna", FROM, TO)).thenReturn(Mono.just(new DailyPresenceReport(
+            "Anna", FROM, TO, FROM, FROM.plusHours(12),
+            List.of(new DailyPresence(LocalDate.of(2026, 10, 1), 21600, FROM.plusHours(6), null, 50.0)))));
+
+        webTestClient.get().uri("/residents/Anna/report/daily?from=2026-10-01T00:00:00&to=2026-10-02T00:00:00")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.name").isEqualTo("Anna")
+            .jsonPath("$.observedFrom").isEqualTo("2026-10-01T00:00:00")
+            .jsonPath("$.observedUntil").isEqualTo("2026-10-01T12:00:00")
+            .jsonPath("$.days[0].date").isEqualTo("2026-10-01")
+            .jsonPath("$.days[0].secondsAtHome").isEqualTo(21600)
+            .jsonPath("$.days[0].firstArrival").isEqualTo("2026-10-01T06:00:00")
+            .jsonPath("$.days[0].lastDeparture").isEmpty()
+            .jsonPath("$.days[0].presencePercentage").isEqualTo(50.0);
+    }
+
+    @Test
+    void should_answer_404_for_the_daily_report_of_an_unknown_resident() {
+        when(presenceStatisticsService.getDailyReport("Anna", FROM, TO)).thenReturn(Mono.error(
+            new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown resident: Anna")));
+
+        webTestClient.get().uri("/residents/Anna/report/daily?from=2026-10-01T00:00:00&to=2026-10-02T00:00:00")
+            .exchange()
+            .expectStatus().isNotFound()
+            .expectBody()
+            .jsonPath("$.errors[0].message").isEqualTo("Unknown resident: Anna");
+    }
+
+    @Test
+    void should_answer_400_when_a_bound_of_the_daily_report_is_not_a_local_date_time() {
+        webTestClient.get()
+            .uri(URI.create("/residents/Anna/report/daily?from=2026-10-01T00:00:00Z&to=2026-10-02T00:00:00"))
+            .exchange()
+            .expectStatus().isBadRequest();
+
+        verifyNoInteractions(presenceStatisticsService);
     }
 
     //without the processor registered in ExceptionHandlerConfig this answers a plain 500

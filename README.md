@@ -31,12 +31,12 @@ carry — phones, watches — as they appear on and disappear from the home Wi-F
 **UniFi Network API**; a resident counts as present while at least one of their registered
 devices is seen on the network.
 
-**Status: presence is detected, stored and reported per resident.** Every minute the service
-reads the clients connected to the home network from the UniFi gateway, matches them against
-the devices of the active household members and records who is at home. The API answers who is
-at home now and when one resident was; the daily statistics, the whole-home report and the
-history retention job arrive with the remaining tasks of the *Household presence monitoring*
-epic. The household members and their devices are kept by `database-service`, not here — this
+**Status: presence is detected, stored and reported.** Every minute the service reads the
+clients connected to the home network from the UniFi gateway, matches them against the devices
+of the active household members and records who is at home. The API answers who is at home
+now, when one resident was, their daily statistics and when the house as a whole was occupied
+or empty; the history retention job arrives with the last task of the *Household presence
+monitoring* epic. The household members and their devices are kept by `database-service`, not here — this
 service reads that registry and owns only the presence history.
 
 ## How presence is decided
@@ -123,15 +123,17 @@ unavailable, the legacy
 
 ## API
 
-Base path `/home/presence` (`spring.webflux.base-path`). The service has **no route in
-`api-gateway-service` yet**, so nothing here is reachable from outside the cluster. The route
-is meant for `/home/presence/residents/**` only — `/clients` lists the MAC address of every
-device on the network and stays inside.
+Base path `/home/presence` (`spring.webflux.base-path`). `api-gateway-service` routes the
+reports by an allowlist — each endpoint is listed there by path and method, so a new one is
+unreachable from outside the cluster until it is added. `/clients` lists the MAC address of
+every device on the network and is deliberately not on that list.
 
 | Method | Path | Description |
 |---|---|---|
 | GET | `/home/presence/residents/presence` | Who is at home now: every **active** member of the registry, ordered by name (Polish collation) — `name`, `present`, `since` (start of the current status), `lastCheckedAt` (the last pass that confirmed it, i.e. how fresh the answer is). A member nothing is stored for yet is listed with `present: false` and both times `null` |
 | GET | `/home/presence/residents/{name}/report?from=&to=` | When one resident was at home within a range: `name`, `from`, `to` and `intervals` (`from`, `to`, `open`), oldest first |
+| GET | `/home/presence/residents/{name}/report/daily?from=&to=` | The days of one resident within a range: per day `secondsAtHome`, `firstArrival`, `lastDeparture`, `presencePercentage` |
+| GET | `/home/presence/house/report?from=&to=` | The house as a whole within a range: `intervals` (`from`, `to`, `occupied`) as one timeline, and per day `secondsOccupied`, `secondsEmpty`, `wasEmpty` |
 | GET | `/home/presence/clients` | Diagnostic: the clients currently connected to the network — `macAddress` (lowercase), `name`, `type` (`WIRED`, `WIRELESS`, …), `connectedAt`. Clients without a MAC address (VPN, Teleport) are left out |
 
 **The report.**
@@ -169,12 +171,59 @@ device on the network and stays inside.
 }
 ```
 
+**The daily statistics and the house report.** The range follows the same rules as the report
+above; the days are calendar days in the zone the service runs in, the first and the last one
+cut to the range.
+
+- **Both end where the history does**, at `observedUntil`: the last check (of the resident, or
+  of anyone for the house), or the end of the range when that comes first. Time nobody has
+  looked at yet — the rest of today, a range reaching into the future — is neither presence nor
+  absence and is not counted, so `presencePercentage` and `secondsEmpty` of the running day
+  refer to the part of it that has passed. `observedUntil` is `null`, with no days, when
+  nothing was observed inside the range.
+- **Both also start where the history does**, at `observedFrom`: the first status ever stored
+  (of the resident, or of anyone for the house), or the start of the range when that comes
+  later. A resident added to the registry last week has no days before that, instead of weeks
+  spent away.
+- **A resident who is not seen for a moment keeps the house occupied.** While the absence
+  threshold runs the service still says "present", and so does the house report; when the
+  resident turns out to have left, the absence is dated back to the last sighting and shows in
+  the next report. So the last minutes of a running house report can still turn from occupied
+  to empty, once such an absence is decided.
+- `firstArrival` and `lastDeparture` are real ones: a presence carried over midnight is no
+  arrival, a presence still going on (or cut off by the range) no departure. Both are `null` on
+  a day spent entirely at home — and on a day spent entirely away.
+- The house is **occupied** while at least one resident is at home — the union of everyone's
+  intervals, members who have since left the registry included — and **empty** otherwise.
+  `wasEmpty` says the house stood empty at some point of that day.
+- As in the report, nothing is interpolated: **time the service did not watch in the middle of
+  the history reads as empty**. Check a surprising empty stretch against the gaps in the
+  residents' reports before acting on it.
+- A day is as long as it really was: 23 and 25 hours on the two days the clocks change.
+
+```json
+{
+  "from": "2026-10-05T00:00:00",
+  "to": "2026-10-06T00:00:00",
+  "observedFrom": "2026-10-05T00:00:00",
+  "observedUntil": "2026-10-05T18:30:00",
+  "intervals": [
+    { "from": "2026-10-05T00:00:00", "to": "2026-10-05T08:10:00", "occupied": true },
+    { "from": "2026-10-05T08:10:00", "to": "2026-10-05T16:45:00", "occupied": false },
+    { "from": "2026-10-05T16:45:00", "to": "2026-10-05T18:30:00", "occupied": true }
+  ],
+  "days": [
+    { "date": "2026-10-05", "secondsOccupied": 35700, "secondsEmpty": 30900, "wasEmpty": true }
+  ]
+}
+```
+
 Errors are answered in the org error format:
 
 | Status | When |
 |---|---|
 | 400 | `from` or `to` missing or not a local date-time, `from` not before `to`, or a range longer than 366 days |
-| 404 | The resident has no history and is not an active member of the registry |
+| 404 | The resident has no history and is not an active member of the registry (report and daily statistics) |
 | 502 | The household registry in `database-service` could not be read — always for the current presence, for a report only when the resident has no history; answered with a fixed message, the cause is in the log only. On `/clients`: the gateway answered with an error (a rejected API key included), could not be reached, presented a certificate other than the pinned one, dropped the connection, or sent an answer that is not the expected JSON |
 | 504 | `/clients`: the gateway did not answer within `unifi.response-timeout` — before the response or in the middle of it |
 | 500 | `/clients`: no site matches `unifi.site` |

@@ -5,8 +5,8 @@ carry as they appear on and disappear from the home Wi-Fi, read from the UniFi N
 a resident counts as present while at least one of their registered devices is seen on the
 network. Built under the *Household presence monitoring* epic (HAS-147) — HAS-148 created
 the skeleton, HAS-149 added the UniFi client, HAS-151 the detection engine with its own
-database, HAS-152 the first reporting API (current presence, per-resident report); the
-statistics and the retention job arrive in HAS-153 and HAS-154.
+database, HAS-152 the first reporting API (current presence, per-resident report), HAS-153
+the daily statistics and the house report; the retention job arrives in HAS-154.
 
 Part of the smart-home-automation-system organization — org-wide conventions, the
 repository map and working rules come from the workspace-level context
@@ -18,10 +18,10 @@ review.
 
 - Talks to: the UniFi Network Integration API on the gateway (outbound, HTTPS over the LAN)
   and `database-service` over k8s DNS (`GET /home/household`, the household registry). Both
-  are polled once a minute. Nothing calls this service yet — it has **no route in
-  `api-gateway-service`**. When the route is added it covers `/home/presence/residents/**`
-  only: `GET /home/presence/clients` is diagnostic, lists the MAC addresses of every device on
-  the network and must stay unreachable from outside. No RabbitMQ.
+  are polled once a minute. `api-gateway-service` routes the reports by an **allowlist**
+  (path and method per endpoint), so **a new endpoint here needs its own entry there** or it
+  answers 404 from outside — and `GET /home/presence/clients`, diagnostic, listing the MAC
+  address of every device on the network, must never get one. No RabbitMQ.
 - Owns the presence history in its own database (`home-automation-presence`); the members and
   their devices stay in `database-service` and are never copied here.
 - Uses libraries: `cholewa-commons` and `smart-home-sdk` — the latter only for the registry
@@ -80,8 +80,9 @@ review.
   simply stops being checked, and if they return, a new row is opened. A reader of "current
   presence" must therefore combine the latest row with the active registry, or look at how old
   `last_checked_at` is.
-- **The reporting API reads, it never asks the tracker** (`ResidentController` →
-  `PresenceReportService`). Current presence is the latest row of every **active** member of
+- **The reporting API reads the table, not the tracker** (`ResidentController` →
+  `PresenceReportService`) — with one exception, the undecided presence in the house report
+  (below). Current presence is the latest row of every **active** member of
   the registry, so it needs `database-service` and answers 502 without it (a fixed message:
   the API is meant to be routed, and the exception names what is behind this service) — the engine's
   last-known registry is deliberately not reused, the answer would silently be stale. A report
@@ -111,10 +112,56 @@ review.
   to `LocalDateTime.parse`, so `T00:00` and fractions pass — an offset does not). The limit of
   a year is 366 calendar days counted on epoch days, because `plusYears` on a bound taken from
   the request can overflow and throw (and Sonar rejects a `Duration` between local date-times). On the night the clocks go back a row can be stored with
-  `last_checked_at` before `started_at`; the calculator does not repair that, the interval
-  comes out as stored — HAS-153 has to guard its sums or the columns move to `TIMESTAMPTZ`. The status in the query
+  `last_checked_at` before `started_at`; the interval calculator does not repair that, the
+  interval comes out as stored — the statistics leave such an interval out and count overlapping
+  ones once; the real fix would be `TIMESTAMPTZ` columns. The status in the query
   is a literal, because nothing in the repository runs against a database; the SQL was run by
   hand against the real one.
+- **Statistics end at the last check, not at the time of the request**
+  (`PresenceStatisticsService` → `PresenceStatisticsCalculator`, again a plain class). An open
+  presence ends at its last check, up to a minute ago; measured against "now", every running
+  day would end in a sliver of empty house and `wasEmpty` would be true every day. So the
+  calculator has no clock (only the zone, for the length of a day) and the service passes
+  `until`: the member's last check for the daily statistics, the newest `last_checked_at` of
+  the table for the house — read **before** the rows, so a pass stored in between only adds
+  presence beyond the end. The answer names it as `observedUntil`; null means nothing was
+  observed in the range, which is not the same as an empty house. Both reports are bounded
+  at the other end too (`observedFrom`: the first row of the member, the first row ever stored
+  for the house). Both bounds are read with
+  `ORDER BY … LIMIT 1`, not `min()`/`max()`: an aggregate over an empty table answers one row
+  holding NULL, which cannot be emitted. The four reads of a house report run one after
+  another on purpose — zipped, they would take both connections of the pool at once.
+- **The last check of the table is not the last check of everyone.** A PRESENT row is not
+  touched while its member's grace period runs, but the ABSENT rows of the others are confirmed
+  every minute — so for up to the threshold the newest check lies after the row of the only
+  one at home, and the stretch in between read as an empty house (`wasEmpty` flapping on a
+  phone asleep). `undecidedPresence` carries such a row on to the end of the report: the latest
+  row of a member, PRESENT, whom **the tracker** still counts as present
+  (`PresenceTracker.presentMembers()`). Asking the tracker is deliberate — a first version
+  worked it out from the age of the row (threshold + 3 min) and was wrong: the grace period
+  starts at the first missed pass and starts over after a restart or skipped passes, so a row
+  can stay unchecked for much longer. The tracker has also forgotten a member who left the
+  registry while present, whose never-closed row would otherwise occupy the house for good.
+  Right after a start, before the state is restored, nothing is carried on. The price: the last
+  minutes of a running report can still turn empty once an absence is dated back.
+- **`wasEmpty` and the seconds of a day are read from the timeline**, each on its own: the
+  stored times are finer than a second, so a day can have an empty stretch in `intervals`,
+  `wasEmpty: true` and `secondsEmpty: 0`. Do not derive one from the other.
+- **What the statistics cannot see inside the history is counted as empty**: an outage across a
+  status change. Nothing here knows whether the service was watching — the table stores only
+  what was seen. Anything that acts on `wasEmpty` (heating) has to know that; a row of "not
+  watched" periods would be the way to tell the two apart. Two smaller ones of the same kind: a
+  row re-opened without a real arrival (a member re-activated in the registry, a confirm that
+  found no row) reads as an arrival and a departure, and on the clocks-back night an hour of
+  presence can be missing or counted double, because the stored local times repeat.
+- **A day is measured in the zone** (`Duration` between zoned times), so it is 23 or 25 hours
+  on the clock-change days, and Sonar's S8700 stays quiet. An arrival is the start of an
+  interval inside the day unless it is the start of the range (possibly cut there); a departure
+  the end of a closed interval unless it is the end of the range.
+- **The house report lives at `/house/report`**, not `/home/report` as the task had it: under
+  the base path that would have been `/home/presence/home/report`. Range validation is shared
+  in `ReportRange`; who is an unknown resident is decided once, in
+  `PresenceReportService.readHistory`, which the daily statistics build on.
 - **The API shares the pool of 2 with the engine and the health indicator**, and its queries
   have no timeout of their own beyond the pool's acquire and validation bounds. Fine for a
   handful of requests; a frontend polling per open profile is the moment to give the service a
