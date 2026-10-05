@@ -71,6 +71,16 @@ public class PresenceTracker {
             .toList();
     }
 
+    //The members the service considers at home right now - also those not seen for a moment, whose
+    //grace period is still running. Members who left the registry are not among them: they are
+    //forgotten by the first pass without them. Empty until the state was restored after a start.
+    public Set<String> presentMembers() {
+        return states.entrySet().stream()
+            .filter(entry -> entry.getValue().status == PRESENT)
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toUnmodifiableSet());
+    }
+
     public void commit(final PresenceDecision decision) {
         final MemberState state = states.computeIfAbsent(decision.memberName(), name -> new MemberState());
         state.status = decision.status();

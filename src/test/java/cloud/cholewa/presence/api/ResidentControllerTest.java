@@ -148,7 +148,7 @@ class ResidentControllerTest {
     @Test
     void should_return_the_daily_report_of_a_resident() {
         when(presenceStatisticsService.getDailyReport("Anna", FROM, TO)).thenReturn(Mono.just(new DailyPresenceReport(
-            "Anna", FROM, TO, FROM.plusHours(12),
+            "Anna", FROM, TO, FROM, FROM.plusHours(12),
             List.of(new DailyPresence(LocalDate.of(2026, 10, 1), 21600, FROM.plusHours(6), null, 50.0)))));
 
         webTestClient.get().uri("/residents/Anna/report/daily?from=2026-10-01T00:00:00&to=2026-10-02T00:00:00")
@@ -156,6 +156,7 @@ class ResidentControllerTest {
             .expectStatus().isOk()
             .expectBody()
             .jsonPath("$.name").isEqualTo("Anna")
+            .jsonPath("$.observedFrom").isEqualTo("2026-10-01T00:00:00")
             .jsonPath("$.observedUntil").isEqualTo("2026-10-01T12:00:00")
             .jsonPath("$.days[0].date").isEqualTo("2026-10-01")
             .jsonPath("$.days[0].secondsAtHome").isEqualTo(21600)

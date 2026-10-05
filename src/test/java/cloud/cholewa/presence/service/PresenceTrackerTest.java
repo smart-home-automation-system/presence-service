@@ -231,6 +231,30 @@ class PresenceTrackerTest {
             .hasOnlyElementsOfType(Changed.class);
     }
 
+    //what the house report asks: who counts as at home right now. Anna is, also while she is not
+    //seen and her grace period runs; she is not before the write was committed, after she was
+    //decided absent, or once she has left the registry
+    @Test
+    void should_name_the_members_considered_present_right_now() {
+        assertThat(sut.presentMembers()).isEmpty();
+
+        final List<PresenceDecision> arrived = pass(T0, Set.of(PHONE));
+        assertThat(sut.presentMembers()).isEmpty();
+
+        arrived.forEach(sut::commit);
+        missedEveryMinute(1, 9);
+        assertThat(sut.presentMembers()).containsExactly("Anna");
+
+        missedEveryMinute(10, 11).forEach(sut::commit);
+        assertThat(sut.presentMembers()).isEmpty();
+
+        passAndCommit(T0.plusMinutes(12), Set.of(PHONE));
+        assertThat(sut.presentMembers()).containsExactly("Anna");
+
+        sut.evaluate(instant(T0.plusMinutes(13)), List.of(JAN), NOBODY);
+        assertThat(sut.presentMembers()).isEmpty();
+    }
+
     //one pass a minute without any device, from T0+fromMinute to T0+toMinute; answers the last one
     private List<PresenceDecision> missedEveryMinute(final int fromMinute, final int toMinute) {
         List<PresenceDecision> last = List.of();

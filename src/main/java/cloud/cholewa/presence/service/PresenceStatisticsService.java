@@ -1,6 +1,5 @@
 package cloud.cholewa.presence.service;
 
-import cloud.cholewa.presence.config.PresenceProperties;
 import cloud.cholewa.presence.database.model.PresenceStatusEntity;
 import cloud.cholewa.presence.database.repository.PresenceStatusRepository;
 import cloud.cholewa.presence.model.DailyPresenceReport;
@@ -8,34 +7,32 @@ import cloud.cholewa.presence.model.HouseReport;
 import cloud.cholewa.presence.model.OccupancyInterval;
 import cloud.cholewa.presence.model.PresenceInterval;
 import cloud.cholewa.presence.model.PresenceStatus;
+import cloud.cholewa.presence.service.PresenceReportService.ResidentHistory;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 //Aggregated reports on top of the intervals: the days of one resident and the occupancy of the
-//whole house. Both cover only what was observed - they end at the last check, not at the time of
-//the request and not at an end of the range that lies in the future: time nobody has looked at yet
-//is neither presence nor absence, and counted in it would make every running day look partly empty.
+//whole house. Both cover only what was observed - from the first stored status to the last check,
+//not to the time of the request and not to an end of the range that lies in the future: time
+//nobody has looked at is neither presence nor absence, and counted in it would make every running
+//day look partly empty.
 @Service
 @RequiredArgsConstructor
 public class PresenceStatisticsService {
-
-    //on top of the absence threshold: the passes are a minute apart and the tracker tolerates up to
-    //three minutes between two of them before it starts a grace period over
-    private static final Duration OBSERVATION_MARGIN = Duration.ofMinutes(3);
 
     private final PresenceReportService presenceReportService;
     private final PresenceStatusRepository presenceStatusRepository;
     private final PresenceIntervalCalculator presenceIntervalCalculator;
     private final PresenceStatisticsCalculator presenceStatisticsCalculator;
-    private final PresenceProperties presenceProperties;
+    private final PresenceTracker presenceTracker;
 
     //Built on the interval report, so the same rules decide who is known (404) and which range is
     //valid (400). A resident nothing is stored for has no day at all.
@@ -45,17 +42,29 @@ public class PresenceStatisticsService {
         final LocalDateTime to
     ) {
         return presenceReportService.readHistory(name, from, to)
-            .map(history -> {
-                final LocalDateTime until = history.lastCheckedAt() == null
-                    ? null
-                    : observedUntil(from, to, history.lastCheckedAt());
+            .flatMap(history -> history.lastCheckedAt() == null
+                ? Mono.<DailyPresenceReport>empty()
+                : presenceStatusRepository.findFirstStartOf(name)
+                    .flatMap(firstStart -> Mono.justOrEmpty(dailyReport(name, from, to, history, firstStart))))
+            .defaultIfEmpty(new DailyPresenceReport(name, from, to, null, null, List.of()));
+    }
 
-                return new DailyPresenceReport(
-                    name, from, to, until,
-                    until == null
-                        ? List.of()
-                        : presenceStatisticsCalculator.dailyPresence(history.report().intervals(), from, to, until));
-            });
+    private Optional<DailyPresenceReport> dailyReport(
+        final String name,
+        final LocalDateTime from,
+        final LocalDateTime to,
+        final ResidentHistory history,
+        final LocalDateTime firstStart
+    ) {
+        final LocalDateTime observedFrom = firstStart.isAfter(from) ? firstStart : from;
+        final LocalDateTime until = observedUntil(observedFrom, to, history.lastCheckedAt());
+
+        return until == null
+            ? Optional.empty()
+            : Optional.of(new DailyPresenceReport(
+                name, from, to, observedFrom, until,
+                presenceStatisticsCalculator.dailyPresence(
+                    history.report().intervals(), from, to, observedFrom, until)));
     }
 
     //The house is occupied while anyone is at home - members who have left the registry since
@@ -77,7 +86,7 @@ public class PresenceStatisticsService {
 
                     return until == null
                         ? Mono.<HouseReport>empty()
-                        : readHouseReport(from, to, observedFrom, until, lastCheck);
+                        : readHouseReport(from, to, observedFrom, until);
                 }))
             //an empty table, or a range outside everything ever observed: not an empty house -
             //nothing is known
@@ -88,8 +97,7 @@ public class PresenceStatisticsService {
         final LocalDateTime from,
         final LocalDateTime to,
         final LocalDateTime observedFrom,
-        final LocalDateTime until,
-        final LocalDateTime lastCheck
+        final LocalDateTime until
     ) {
         return presenceStatusRepository.findLatestPerMember()
             .collectList()
@@ -99,7 +107,7 @@ public class PresenceStatisticsService {
                     //no row is "the latest of the member" here: open means nothing for a union
                     final List<PresenceInterval> intervals =
                         new ArrayList<>(presenceIntervalCalculator.derive(rows, null, from, to));
-                    intervals.addAll(undecidedPresence(latestRows, lastCheck, until));
+                    intervals.addAll(undecidedPresence(latestRows, until));
 
                     final List<OccupancyInterval> timeline =
                         presenceStatisticsCalculator.occupancy(intervals, observedFrom, until);
@@ -114,21 +122,22 @@ public class PresenceStatisticsService {
     //grace period runs, and only when it runs out is the absence written - dated back to the last
     //sighting. Meanwhile the rows of the others move on, so the last check of the table lies after
     //that row's and the stretch in between would read as nobody at home, although the service still
-    //says "present". It is counted as presence until decided otherwise, like the current presence
-    //does; should the member turn out to have left, the absence appears in the next report.
-    //Only a fresh row is carried on - the last row of a member who left the registry while present
-    //is never closed, and would keep the house occupied for good.
+    //says "present". It is counted as presence until decided otherwise; should the member turn
+    //out to have left, the absence appears in the next report.
+    //Who is still present is the tracker's to say, not something to work out from the age of a
+    //row: how long a row can stay unchecked depends on when the grace period started, and it
+    //starts over after a restart or skipped passes. And the tracker has forgotten a member who
+    //left the registry while present - whose last row is never closed, and would otherwise keep
+    //the house occupied for good.
     private List<PresenceInterval> undecidedPresence(
         final List<PresenceStatusEntity> latestRows,
-        final LocalDateTime lastCheck,
         final LocalDateTime until
     ) {
-        final LocalDateTime stillUndecidedSince =
-            lastCheck.minus(presenceProperties.absenceThreshold()).minus(OBSERVATION_MARGIN);
+        final Set<String> present = presenceTracker.presentMembers();
 
         return latestRows.stream()
             .filter(row -> row.status() == PresenceStatus.PRESENT)
-            .filter(row -> !row.lastCheckedAt().isBefore(stillUndecidedSince))
+            .filter(row -> present.contains(row.memberName()))
             .filter(row -> row.lastCheckedAt().isBefore(until))
             .map(row -> new PresenceInterval(row.lastCheckedAt(), until, true))
             .toList();

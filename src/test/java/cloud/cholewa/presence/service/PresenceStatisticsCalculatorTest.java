@@ -34,7 +34,7 @@ class PresenceStatisticsCalculatorTest {
 
         final List<DailyPresence> days = sut.dailyPresence(
             List.of(closed(MONDAY.atTime(7, 0), MONDAY.atTime(9, 0)), closed(MONDAY.atTime(17, 0), MONDAY.atTime(23, 0))),
-            from, to, to);
+            from, to, from, to);
 
         assertThat(days).containsExactly(new DailyPresence(
             MONDAY, 8 * HOUR, MONDAY.atTime(7, 0), MONDAY.atTime(23, 0), 33.3));
@@ -48,7 +48,7 @@ class PresenceStatisticsCalculatorTest {
         final LocalDateTime to = WEDNESDAY.atStartOfDay();
 
         final List<DailyPresence> days = sut.dailyPresence(
-            List.of(closed(MONDAY.atTime(18, 0), TUESDAY.atTime(8, 0))), from, to, to);
+            List.of(closed(MONDAY.atTime(18, 0), TUESDAY.atTime(8, 0))), from, to, from, to);
 
         assertThat(days).containsExactly(
             new DailyPresence(MONDAY, 6 * HOUR, MONDAY.atTime(18, 0), null, 25.0),
@@ -62,7 +62,7 @@ class PresenceStatisticsCalculatorTest {
         final LocalDateTime to = WEDNESDAY.atStartOfDay();
 
         final List<DailyPresence> days = sut.dailyPresence(
-            List.of(closed(TUESDAY.atTime(10, 0), TUESDAY.atTime(11, 0))), from, to, to);
+            List.of(closed(TUESDAY.atTime(10, 0), TUESDAY.atTime(11, 0))), from, to, from, to);
 
         assertThat(days).first().isEqualTo(new DailyPresence(MONDAY, 0, null, null, 0.0));
     }
@@ -73,7 +73,7 @@ class PresenceStatisticsCalculatorTest {
         final LocalDateTime from = MONDAY.atStartOfDay();
         final LocalDateTime to = TUESDAY.atStartOfDay();
 
-        final List<DailyPresence> days = sut.dailyPresence(List.of(closed(from, to)), from, to, to);
+        final List<DailyPresence> days = sut.dailyPresence(List.of(closed(from, to)), from, to, from, to);
 
         assertThat(days).containsExactly(new DailyPresence(MONDAY, DAY, null, null, 100.0));
     }
@@ -87,7 +87,7 @@ class PresenceStatisticsCalculatorTest {
         final LocalDateTime lastCheck = MONDAY.atTime(12, 0);
 
         final List<DailyPresence> days = sut.dailyPresence(
-            List.of(new PresenceInterval(MONDAY.atTime(6, 0), lastCheck, true)), from, to, lastCheck);
+            List.of(new PresenceInterval(MONDAY.atTime(6, 0), lastCheck, true)), from, to, from, lastCheck);
 
         assertThat(days).containsExactly(new DailyPresence(MONDAY, 6 * HOUR, MONDAY.atTime(6, 0), null, 50.0));
     }
@@ -99,7 +99,7 @@ class PresenceStatisticsCalculatorTest {
         final LocalDateTime to = TUESDAY.atTime(6, 0);
 
         final List<DailyPresence> days = sut.dailyPresence(
-            List.of(closed(MONDAY.atTime(18, 0), TUESDAY.atTime(3, 0))), from, to, to);
+            List.of(closed(MONDAY.atTime(18, 0), TUESDAY.atTime(3, 0))), from, to, from, to);
 
         assertThat(days).containsExactly(
             new DailyPresence(MONDAY, 6 * HOUR, MONDAY.atTime(18, 0), null, 50.0),
@@ -111,7 +111,52 @@ class PresenceStatisticsCalculatorTest {
     void should_answer_no_day_when_nothing_was_observed_in_the_range() {
         final LocalDateTime from = MONDAY.atStartOfDay();
 
-        assertThat(sut.dailyPresence(List.of(), from, TUESDAY.atStartOfDay(), from)).isEmpty();
+        assertThat(sut.dailyPresence(List.of(), from, TUESDAY.atStartOfDay(), from, from)).isEmpty();
+    }
+
+    //the history of the resident starts on Tuesday at 6: Monday was not watched and is no day away
+    @Test
+    void should_start_the_days_where_the_history_of_the_resident_starts() {
+        final LocalDateTime from = MONDAY.atStartOfDay();
+        final LocalDateTime to = WEDNESDAY.atStartOfDay();
+        final LocalDateTime firstStart = TUESDAY.atTime(6, 0);
+
+        final List<DailyPresence> days = sut.dailyPresence(
+            List.of(closed(firstStart, TUESDAY.atTime(15, 0))), from, to, firstStart, to);
+
+        assertThat(days).containsExactly(
+            new DailyPresence(TUESDAY, 9 * HOUR, firstStart, TUESDAY.atTime(15, 0), 50.0));
+    }
+
+    //the resident has just come home: the pass that saw them stored the arrival and is the last
+    //check at the same time
+    @Test
+    void should_report_an_arrival_stored_by_the_very_last_pass() {
+        final LocalDateTime from = MONDAY.atStartOfDay();
+        final LocalDateTime to = TUESDAY.atStartOfDay();
+        final LocalDateTime arrival = MONDAY.atTime(17, 30);
+
+        final List<DailyPresence> days = sut.dailyPresence(
+            List.of(new PresenceInterval(arrival, arrival, true)), from, to, from, arrival);
+
+        assertThat(days).containsExactly(new DailyPresence(MONDAY, 0, arrival, null, 0.0));
+    }
+
+    //the stored times are finer than a second: an empty stretch of 700 ms is in the timeline, so
+    //the flag has to say so although no whole second was empty
+    @Test
+    void should_flag_a_day_as_empty_for_a_stretch_shorter_than_a_second() {
+        final LocalDateTime from = MONDAY.atStartOfDay();
+        final LocalDateTime to = TUESDAY.atStartOfDay();
+        final LocalDateTime left = MONDAY.atTime(8, 10, 0).plusNanos(200_000_000);
+        final LocalDateTime arrived = MONDAY.atTime(8, 10, 0).plusNanos(900_000_000);
+        final List<OccupancyInterval> timeline = sut.occupancy(
+            List.of(closed(from, left), closed(arrived, to)), from, to);
+
+        assertThat(sut.dailyOccupancy(timeline, from, to)).singleElement().satisfies(day -> {
+            assertThat(day.wasEmpty()).isTrue();
+            assertThat(day.secondsEmpty()).isZero();
+        });
     }
 
     //the clocks go back on 2026-10-25: the day has 25 hours, and a presence across the change is as
@@ -123,7 +168,7 @@ class PresenceStatisticsCalculatorTest {
         final LocalDateTime to = changeDay.plusDays(1).atStartOfDay();
 
         final List<DailyPresence> days = sut.dailyPresence(
-            List.of(closed(changeDay.atTime(1, 0), changeDay.atTime(4, 0))), from, to, to);
+            List.of(closed(changeDay.atTime(1, 0), changeDay.atTime(4, 0))), from, to, from, to);
 
         assertThat(days).containsExactly(new DailyPresence(
             changeDay, 4 * HOUR, changeDay.atTime(1, 0), changeDay.atTime(4, 0), 16.0));
@@ -135,7 +180,7 @@ class PresenceStatisticsCalculatorTest {
         final LocalDateTime from = changeDay.atStartOfDay();
         final LocalDateTime to = changeDay.plusDays(1).atStartOfDay();
 
-        final List<DailyPresence> days = sut.dailyPresence(List.of(closed(from, to)), from, to, to);
+        final List<DailyPresence> days = sut.dailyPresence(List.of(closed(from, to)), from, to, from, to);
 
         assertThat(days).containsExactly(new DailyPresence(changeDay, 23 * HOUR, null, null, 100.0));
     }
@@ -154,7 +199,7 @@ class PresenceStatisticsCalculatorTest {
                 closed(changeDay.atTime(10, 0), changeDay.atTime(12, 0)),
                 closed(changeDay.atTime(11, 0), changeDay.atTime(13, 0))
             ),
-            from, to, to);
+            from, to, from, to);
 
         assertThat(days).singleElement().satisfies(day -> {
             assertThat(day.secondsAtHome()).isEqualTo(3 * HOUR);

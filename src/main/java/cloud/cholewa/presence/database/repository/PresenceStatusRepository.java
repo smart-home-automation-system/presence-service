@@ -65,6 +65,10 @@ public interface PresenceStatusRepository extends R2dbcRepository<PresenceStatus
     @Query("SELECT last_checked_at FROM presence_status ORDER BY last_checked_at DESC LIMIT 1")
     Mono<LocalDateTime> findLastCheck();
 
+    //where the history of one member starts; empty for a member nothing is stored for
+    @Query("SELECT started_at FROM presence_status WHERE member_name = :memberName ORDER BY started_at LIMIT 1")
+    Mono<LocalDateTime> findFirstStartOf(String memberName);
+
     //moves last_checked_at of the member's latest row; answers the number of rows changed, which is
     //0 when the member has no row yet
     @Modifying

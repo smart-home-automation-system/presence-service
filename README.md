@@ -181,14 +181,15 @@ cut to the range.
   absence and is not counted, so `presencePercentage` and `secondsEmpty` of the running day
   refer to the part of it that has passed. `observedUntil` is `null`, with no days, when
   nothing was observed inside the range.
-- **The house report also starts where the history does**, at `observedFrom`: the first status
-  ever stored, or the start of the range when that comes later. The daily statistics of a
-  resident have no such bound — days before their first row are reported with 0 %.
+- **Both also start where the history does**, at `observedFrom`: the first status ever stored
+  (of the resident, or of anyone for the house), or the start of the range when that comes
+  later. A resident added to the registry last week has no days before that, instead of weeks
+  spent away.
 - **A resident who is not seen for a moment keeps the house occupied.** While the absence
   threshold runs the service still says "present", and so does the house report; when the
   resident turns out to have left, the absence is dated back to the last sighting and shows in
-  the next report. So the last minutes of a running report (the threshold plus a few) can
-  still turn from occupied to empty — never the other way round.
+  the next report. So the last minutes of a running house report can still turn from occupied
+  to empty, once such an absence is decided.
 - `firstArrival` and `lastDeparture` are real ones: a presence carried over midnight is no
   arrival, a presence still going on (or cut off by the range) no departure. Both are `null` on
   a day spent entirely at home — and on a day spent entirely away.

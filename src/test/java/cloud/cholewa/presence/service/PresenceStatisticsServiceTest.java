@@ -54,24 +54,26 @@ class PresenceStatisticsServiceTest {
     @Mock
     private PresenceStatusRepository presenceStatusRepository;
 
+    private PresenceTracker presenceTracker;
     private PresenceStatisticsService sut;
 
     @BeforeEach
     void setUp() {
         final Clock clock = Clock.fixed(Instant.parse("2026-10-07T10:00:00Z"), ZoneId.of("Europe/Warsaw"));
+        presenceTracker = new PresenceTracker(new PresenceProperties(Duration.ofMinutes(10)), clock);
         sut = new PresenceStatisticsService(
             presenceReportService, presenceStatusRepository,
-            new PresenceIntervalCalculator(), new PresenceStatisticsCalculator(clock),
-            new PresenceProperties(Duration.ofMinutes(10)));
+            new PresenceIntervalCalculator(), new PresenceStatisticsCalculator(clock), presenceTracker);
     }
 
     @Test
     void should_report_the_days_of_a_resident_from_their_intervals() {
         when(presenceReportService.readHistory("Anna", FROM, TO)).thenReturn(Mono.just(history(
             List.of(new PresenceInterval(MONDAY.atTime(7, 0), MONDAY.atTime(13, 0), false)), TO.plusHours(5))));
+        when(presenceStatusRepository.findFirstStartOf("Anna")).thenReturn(Mono.just(LONG_BEFORE));
 
         sut.getDailyReport("Anna", FROM, TO).as(StepVerifier::create)
-            .expectNext(new DailyPresenceReport("Anna", FROM, TO, TO, List.of(
+            .expectNext(new DailyPresenceReport("Anna", FROM, TO, FROM, TO, List.of(
                 new DailyPresence(MONDAY, 6 * HOUR, MONDAY.atTime(7, 0), MONDAY.atTime(13, 0), 25.0))))
             .verifyComplete();
     }
@@ -82,10 +84,26 @@ class PresenceStatisticsServiceTest {
         final LocalDateTime lastCheck = MONDAY.atTime(12, 0);
         when(presenceReportService.readHistory("Anna", FROM, TO)).thenReturn(Mono.just(history(
             List.of(new PresenceInterval(MONDAY.atTime(6, 0), lastCheck, true)), lastCheck)));
+        when(presenceStatusRepository.findFirstStartOf("Anna")).thenReturn(Mono.just(LONG_BEFORE));
 
         sut.getDailyReport("Anna", FROM, TO).as(StepVerifier::create)
-            .expectNext(new DailyPresenceReport("Anna", FROM, TO, lastCheck, List.of(
+            .expectNext(new DailyPresenceReport("Anna", FROM, TO, FROM, lastCheck, List.of(
                 new DailyPresence(MONDAY, 6 * HOUR, MONDAY.atTime(6, 0), null, 50.0))))
+            .verifyComplete();
+    }
+
+    //the resident was added to the registry on Monday at 6: the hours before were not watched, so
+    //they are no time away - 9 of the 18 observed hours at home, not of 24
+    @Test
+    void should_start_the_days_of_a_resident_where_their_history_starts() {
+        final LocalDateTime firstStart = MONDAY.atTime(6, 0);
+        when(presenceReportService.readHistory("Anna", FROM, TO)).thenReturn(Mono.just(history(
+            List.of(new PresenceInterval(firstStart, MONDAY.atTime(15, 0), false)), TO.plusHours(5))));
+        when(presenceStatusRepository.findFirstStartOf("Anna")).thenReturn(Mono.just(firstStart));
+
+        sut.getDailyReport("Anna", FROM, TO).as(StepVerifier::create)
+            .expectNext(new DailyPresenceReport("Anna", FROM, TO, firstStart, TO, List.of(
+                new DailyPresence(MONDAY, 9 * HOUR, firstStart, MONDAY.atTime(15, 0), 50.0))))
             .verifyComplete();
     }
 
@@ -94,20 +112,25 @@ class PresenceStatisticsServiceTest {
         when(presenceReportService.readHistory("Anna", FROM, TO)).thenReturn(Mono.just(history(List.of(), null)));
 
         sut.getDailyReport("Anna", FROM, TO).as(StepVerifier::create)
-            .expectNext(new DailyPresenceReport("Anna", FROM, TO, null, List.of()))
+            .expectNext(new DailyPresenceReport("Anna", FROM, TO, null, null, List.of()))
             .verifyComplete();
     }
 
     //a resident last checked before the range starts - one who left the registry, or a range in
-    //the future: nothing was observed in it
+    //the future - or first stored after it ends: nothing was observed in it
     @Test
-    void should_answer_no_day_for_a_range_after_the_last_check_of_the_resident() {
+    void should_answer_no_day_for_a_range_outside_the_history_of_the_resident() {
+        final DailyPresenceReport nothing = new DailyPresenceReport("Anna", FROM, TO, null, null, List.of());
+
         when(presenceReportService.readHistory("Anna", FROM, TO))
             .thenReturn(Mono.just(history(List.of(), FROM.minusDays(3))));
+        when(presenceStatusRepository.findFirstStartOf("Anna")).thenReturn(Mono.just(LONG_BEFORE));
+        sut.getDailyReport("Anna", FROM, TO).as(StepVerifier::create).expectNext(nothing).verifyComplete();
 
-        sut.getDailyReport("Anna", FROM, TO).as(StepVerifier::create)
-            .expectNext(new DailyPresenceReport("Anna", FROM, TO, null, List.of()))
-            .verifyComplete();
+        when(presenceReportService.readHistory("Anna", FROM, TO))
+            .thenReturn(Mono.just(history(List.of(), TO.plusDays(3))));
+        when(presenceStatusRepository.findFirstStartOf("Anna")).thenReturn(Mono.just(TO.plusDays(1)));
+        sut.getDailyReport("Anna", FROM, TO).as(StepVerifier::create).expectNext(nothing).verifyComplete();
     }
 
     //who is unknown and which range is valid is decided by the interval report, once
@@ -159,14 +182,17 @@ class PresenceStatisticsServiceTest {
             .verifyComplete();
     }
 
-    //Anna's phone dropped off the Wi-Fi five minutes ago: her row is not checked while the grace
-    //period runs, while Tom's absence is confirmed every minute and moves the last check on. She
-    //is still "present" for the service, so those five minutes are not an empty house
+    //Anna's phone dropped off the Wi-Fi half an hour ago and the grace period started over after a
+    //restart: her row is not checked while it runs, while Tom's absence is confirmed every minute
+    //and moves the last check on. She is still "present" for the service - the tracker says so -
+    //so that half hour is not an empty house, however old her row is
     @Test
     void should_keep_the_house_occupied_while_the_absence_of_the_only_one_at_home_is_undecided() {
         final LocalDateTime lastCheck = MONDAY.atTime(12, 0);
         final PresenceStatusEntity anna =
-            new PresenceStatusEntity(1L, "Anna", PRESENT, FROM.minusHours(4), lastCheck.minusMinutes(5));
+            new PresenceStatusEntity(1L, "Anna", PRESENT, FROM.minusHours(4), lastCheck.minusMinutes(30));
+        presenceTracker.restore("Anna", PRESENT, anna.lastCheckedAt());
+        presenceTracker.restore("Tom", ABSENT, lastCheck);
         final PresenceStatusEntity tom = new PresenceStatusEntity(2L, "Tom", ABSENT, FROM.minusHours(9), lastCheck);
         observed(LONG_BEFORE, lastCheck, anna, tom);
         when(presenceStatusRepository.findPresentBetween(FROM, TO)).thenReturn(Flux.just(anna));
@@ -179,10 +205,11 @@ class PresenceStatisticsServiceTest {
     }
 
     //the last row of a member who left the registry while present is never closed; carried on, it
-    //would keep the house occupied for good. Only a row as fresh as an undecided absence counts
+    //would keep the house occupied for good. The tracker has forgotten them, so it is not
     @Test
-    void should_not_carry_on_a_presence_that_stopped_being_checked_long_ago() {
+    void should_not_carry_on_the_presence_of_a_member_the_tracker_no_longer_watches() {
         final LocalDateTime lastCheck = MONDAY.atTime(12, 0);
+        presenceTracker.restore("Tom", ABSENT, lastCheck);
         final PresenceStatusEntity gone =
             new PresenceStatusEntity(1L, "Gone", PRESENT, FROM.minusHours(4), MONDAY.atTime(8, 0));
         final PresenceStatusEntity tom = new PresenceStatusEntity(2L, "Tom", ABSENT, FROM.minusHours(9), lastCheck);

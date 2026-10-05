@@ -14,6 +14,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.Predicate;
 
 //Statistics on top of the intervals PresenceIntervalCalculator derives: days of one resident, and
 //the occupancy of the whole house. A plain class with no I/O and no clock of its own - what it
@@ -30,20 +31,26 @@ public class PresenceStatisticsCalculator {
         this.zone = clock.getZone();
     }
 
-    //One entry per calendar day between from and until, also for a day spent away. The intervals
-    //are those of one resident, already cut to the range from..to.
+    //One entry per calendar day between observedFrom and until, also for a day spent away. The
+    //intervals are those of one resident, already cut to the range from..to.
     public List<DailyPresence> dailyPresence(
         final List<PresenceInterval> intervals,
         final LocalDateTime from,
         final LocalDateTime to,
+        final LocalDateTime observedFrom,
         final LocalDateTime until
     ) {
         final List<PresenceInterval> usable = intervals.stream().filter(PresenceStatisticsCalculator::runsForward).toList();
         final List<Span> atHome = merge(usable.stream().map(interval -> new Span(interval.from(), interval.to())).toList());
 
-        return days(from, until).stream()
+        return days(observedFrom, until).stream()
             .map(day -> {
                 final long secondsAtHome = secondsWithin(atHome, day);
+                //a day ends before its last moment, so that midnight belongs to one day only - but
+                //the statistics end at "until", and an arrival stored by the very last pass falls
+                //exactly on it
+                final Predicate<LocalDateTime> inDay =
+                    moment -> day.contains(moment) || (moment.equals(until) && day.end().equals(until));
 
                 return new DailyPresence(
                     day.date(),
@@ -52,14 +59,14 @@ public class PresenceStatisticsCalculator {
                     //have been - it does not count as an arrival
                     usable.stream()
                         .map(PresenceInterval::from)
-                        .filter(start -> !start.equals(from) && day.contains(start))
+                        .filter(start -> !start.equals(from) && inDay.test(start))
                         .min(Comparator.naturalOrder())
                         .orElse(null),
                     //the same at the other end, and a presence still going on has not ended at all
                     usable.stream()
                         .filter(interval -> !interval.open())
                         .map(PresenceInterval::to)
-                        .filter(end -> !end.equals(to) && day.contains(end))
+                        .filter(end -> !end.equals(to) && inDay.test(end))
                         .max(Comparator.naturalOrder())
                         .orElse(null),
                     percentage(secondsAtHome, seconds(day.start(), day.end()))
@@ -104,24 +111,32 @@ public class PresenceStatisticsCalculator {
         return timeline;
     }
 
-    //the days of the timeline occupancy() built: how long the house was occupied and empty
+    //The days of the timeline occupancy() built: how long the house was occupied and empty. Both
+    //are summed from the timeline, and wasEmpty is read from it, not from the seconds - the stored
+    //times are finer than a second, so an empty stretch shorter than one would otherwise be in
+    //the timeline and missing from the flag.
     public List<DailyOccupancy> dailyOccupancy(
         final List<OccupancyInterval> timeline,
         final LocalDateTime from,
         final LocalDateTime until
     ) {
-        final List<Span> occupied = timeline.stream()
-            .filter(OccupancyInterval::occupied)
-            .map(interval -> new Span(interval.from(), interval.to()))
-            .toList();
+        final List<Span> occupied = spans(timeline, true);
+        final List<Span> empty = spans(timeline, false);
 
         return days(from, until).stream()
-            .map(day -> {
-                final long secondsOccupied = secondsWithin(occupied, day);
-                final long secondsEmpty = seconds(day.start(), day.end()) - secondsOccupied;
+            .map(day -> new DailyOccupancy(
+                day.date(),
+                secondsWithin(occupied, day),
+                secondsWithin(empty, day),
+                empty.stream().anyMatch(span -> span.from().isBefore(day.end()) && span.to().isAfter(day.start()))
+            ))
+            .toList();
+    }
 
-                return new DailyOccupancy(day.date(), secondsOccupied, secondsEmpty, secondsEmpty > 0);
-            })
+    private static List<Span> spans(final List<OccupancyInterval> timeline, final boolean occupied) {
+        return timeline.stream()
+            .filter(interval -> interval.occupied() == occupied)
+            .map(interval -> new Span(interval.from(), interval.to()))
             .toList();
     }
 

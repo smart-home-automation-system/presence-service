@@ -80,8 +80,9 @@ review.
   simply stops being checked, and if they return, a new row is opened. A reader of "current
   presence" must therefore combine the latest row with the active registry, or look at how old
   `last_checked_at` is.
-- **The reporting API reads, it never asks the tracker** (`ResidentController` →
-  `PresenceReportService`). Current presence is the latest row of every **active** member of
+- **The reporting API reads the table, not the tracker** (`ResidentController` →
+  `PresenceReportService`) — with one exception, the undecided presence in the house report
+  (below). Current presence is the latest row of every **active** member of
   the registry, so it needs `database-service` and answers 502 without it (a fixed message:
   the API is meant to be routed, and the exception names what is behind this service) — the engine's
   last-known registry is deliberately not reused, the answer would silently be stale. A report
@@ -124,8 +125,9 @@ review.
   `until`: the member's last check for the daily statistics, the newest `last_checked_at` of
   the table for the house — read **before** the rows, so a pass stored in between only adds
   presence beyond the end. The answer names it as `observedUntil`; null means nothing was
-  observed in the range, which is not the same as an empty house. The house report is bounded
-  at the other end too (`observedFrom`, the first row ever stored). Both bounds are read with
+  observed in the range, which is not the same as an empty house. Both reports are bounded
+  at the other end too (`observedFrom`: the first row of the member, the first row ever stored
+  for the house). Both bounds are read with
   `ORDER BY … LIMIT 1`, not `min()`/`max()`: an aggregate over an empty table answers one row
   holding NULL, which cannot be emitted. The four reads of a house report run one after
   another on purpose — zipped, they would take both connections of the pool at once.
@@ -134,10 +136,17 @@ review.
   every minute — so for up to the threshold the newest check lies after the row of the only
   one at home, and the stretch in between read as an empty house (`wasEmpty` flapping on a
   phone asleep). `undecidedPresence` carries such a row on to the end of the report: the latest
-  row of a member, PRESENT, last checked within `absence-threshold` + 3 min of the newest
-  check. The freshness bound is what keeps the never-closed row of a member who left the
-  registry from occupying the house for good. The price: the last minutes of a running report
-  can still turn empty once an absence is dated back.
+  row of a member, PRESENT, whom **the tracker** still counts as present
+  (`PresenceTracker.presentMembers()`). Asking the tracker is deliberate — a first version
+  worked it out from the age of the row (threshold + 3 min) and was wrong: the grace period
+  starts at the first missed pass and starts over after a restart or skipped passes, so a row
+  can stay unchecked for much longer. The tracker has also forgotten a member who left the
+  registry while present, whose never-closed row would otherwise occupy the house for good.
+  Right after a start, before the state is restored, nothing is carried on. The price: the last
+  minutes of a running report can still turn empty once an absence is dated back.
+- **`wasEmpty` and the seconds of a day are read from the timeline**, each on its own: the
+  stored times are finer than a second, so a day can have an empty stretch in `intervals`,
+  `wasEmpty: true` and `secondsEmpty: 0`. Do not derive one from the other.
 - **What the statistics cannot see inside the history is counted as empty**: an outage across a
   status change. Nothing here knows whether the service was watching — the table stores only
   what was seen. Anything that acts on `wasEmpty` (heating) has to know that; a row of "not
