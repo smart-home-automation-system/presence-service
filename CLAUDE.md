@@ -6,7 +6,8 @@ a resident counts as present while at least one of their registered devices is s
 network. Built under the *Household presence monitoring* epic (HAS-147) — HAS-148 created
 the skeleton, HAS-149 added the UniFi client, HAS-151 the detection engine with its own
 database, HAS-152 the first reporting API (current presence, per-resident report), HAS-153
-the daily statistics and the house report; the retention job arrives in HAS-154.
+the daily statistics and the house report, HAS-154 the retention job — the epic's scope is
+complete.
 
 Part of the smart-home-automation-system organization — org-wide conventions, the
 repository map and working rules come from the workspace-level context
@@ -115,7 +116,7 @@ review.
   `last_checked_at` before `started_at`; the interval calculator does not repair that, the
   interval comes out as stored — the statistics leave such an interval out and count overlapping
   ones once; the real fix would be `TIMESTAMPTZ` columns. The status in the query
-  is a literal, because nothing in the repository runs against a database; the SQL was run by
+  is a literal, because no test runs these reads against a database; the SQL was run by
   hand against the real one.
 - **Statistics end at the last check, not at the time of the request**
   (`PresenceStatisticsService` → `PresenceStatisticsCalculator`, again a plain class). An open
@@ -185,11 +186,61 @@ review.
 - **Rows are keyed by `member_name`, not by an id.** The registry API identifies members by
   name and the SDK model carries no id; the name is unique there. A rename in the registry
   starts a new history. There is no foreign key (another database), so rows of a removed
-  member stay until the retention job (HAS-154).
+  member stay until the retention job deletes them, a retention period after their last check.
+- **Retention deletes by `last_checked_at`, never by `started_at`** (`PresenceRetentionCron` →
+  `PresenceRetention`, daily at 03:00 — an hour that exists exactly once also on the nights the
+  clocks change). That is what keeps the current row of every watched member: it is checked
+  every minute, however long ago it started (a year away is one ABSENT row). Do not "protect
+  the latest row per member" on top of it — the never-closed last row of a member who left the
+  registry would then stay for good. The job is a class of its own, never fails (logs, and the
+  next night makes up for it) and is bounded by a timeout, because the delete holds one of the
+  two pooled connections the detection needs. Reactive `@Scheduled` methods do not block the
+  scheduler thread, so it cannot hold the detection up either. In the `test` profile the cron
+  is `-` (off); the schedule has its only default in `application.yaml`.
+- **A reactive `@Scheduled` method is called once, not once per run.** Spring invokes it at
+  startup, keeps the `Mono` and subscribes to it again every time
+  (`ScheduledAnnotationReactiveSupport`). Anything computed while the `Mono` is built — a
+  cutoff, "now", a value read from a property that may change — is frozen at the start of the
+  pod. `PresenceRetention.purge()` first had its cutoff outside the chain: it would have
+  deleted up to the same date every night until a restart, logging that date as if it were
+  current. Everything time-dependent goes inside `Mono.defer`
+  (`PresenceEngine.detect()` was safe only because its clock read sits in a lambda), and the
+  test for it subscribes twice to the **same** `Mono` with the clock moved on — a fresh
+  `purge()` per test cannot see the bug. Worth checking in every service with a reactive
+  `@Scheduled`.
+- **`presence.retention` cannot be made small enough to wipe the table**: `@DurationUnit(DAYS)`,
+  `@DurationMin(days = 7)` and `@DurationMax(days = 3660)`, pinned by `PresencePropertiesTest`. Without the unit `365` binds
+  as 365 ms, the cutoff is "now" and the nightly delete takes every row, the current ones
+  included — the next pass would silently reopen each period dated now
+  (`PresenceStatusStore.confirm`), every night.
+- **The timeout of the purge only stops waiting.** It does not abort the statement on the
+  server, and the cancelled connection goes back to the pool — the mechanism of the 2026-09-26
+  outage; what makes that safe now is the pool's validation on acquire (`cholewa-commons`
+  ≥ 1.5.0), not this timeout. Hence the log line says "did not complete", not "nothing was
+  deleted", and carries the exception itself.
+- **A kept row can start before the retention horizon** (one ABSENT row for a year away), while
+  everything around it that ended earlier is deleted. So the first `started_at` is not where
+  the observed history starts: `observedFrom` of both statistics is clamped to
+  `PresenceRetention.horizon()` — the same value the purge deletes by — or the purged stretch
+  would read as observed and nobody at home. The clamp does not know whether a purge has run
+  (with the job off the statistics simply start there too), nor how far an earlier, shorter
+  retention has purged: raising `presence.retention` re-exposes that stretch as empty. The
+  interval report has no observed bounds and cannot say this; the range limit (366 days,
+  `ReportRange`) is not derived from `presence.retention` either — change one, look at the
+  other.
 - **Insert only on a status change** — a confirming pass only moves `last_checked_at` of the
   member's latest row (`touchLatest`). Keep it that way: a row per poll would be 1440 rows per
   member per day. The SQL (`DISTINCT ON`, the update of the latest row) was verified on a real
-  PostgreSQL 17, but no test in the repository runs against a database.
+  PostgreSQL 17, but no test in the repository runs it against a database.
+- **One test does run SQL: `PresenceStatusRetentionTest`**, a `@DataR2dbcTest` slice on an
+  in-memory H2 (`r2dbc-h2`, test scope) — the retention delete is destructive and portable, so
+  it gets a real test with rows on both sides of the cutoff. Three things that made it work: the
+  slice does not load the pooled `ConnectionFactory` of `cholewa-commons`, so
+  `spring.r2dbc.url` alone points it at H2; the table is created by the test (Flyway is not in
+  the slice, and `V1` is PostgreSQL DDL); and H2 needs `CASE_INSENSITIVE_IDENTIFIERS=TRUE`,
+  because Spring Data quotes the table name in lower case while raw `@Query` SQL does not
+  quote it at all. The PostgreSQL-only reads (`DISTINCT ON`) cannot be tested this way — that
+  would take Testcontainers.
 - **`database.pool.max-size` is 2** (3 until 0.3.0): 16 of the 22 backend connections of the
   managed database are allotted (heating 4 / database 6 / water 4 / presence 2), 6 are free.
   Two are enough here — the engine stores one member at a time (`concatMap`), the second

@@ -38,7 +38,9 @@ public class PresenceStatusStore {
     private Mono<Void> confirm(final Confirmed confirmed) {
         return presenceStatusRepository.touchLatest(confirmed.memberName(), confirmed.checkedAt())
             .filter(updated -> updated == 0)
-            //the tracker knows a status the table has no row for (rows removed by hand) - the
+            //the tracker knows a status the table has no row for (rows removed by hand; the
+            //retention takes a current row only when the detection was down for longer than the
+            //retention period, since such a row is otherwise checked every minute) - the
             //period is opened again instead of confirming into nothing
             .flatMap(nothingUpdated -> {
                 log.warn("No presence row to confirm for {}, opening a new one", confirmed.memberName());
