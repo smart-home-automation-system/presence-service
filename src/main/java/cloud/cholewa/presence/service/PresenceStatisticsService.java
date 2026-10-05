@@ -1,6 +1,5 @@
 package cloud.cholewa.presence.service;
 
-import cloud.cholewa.presence.config.PresenceProperties;
 import cloud.cholewa.presence.database.model.PresenceStatusEntity;
 import cloud.cholewa.presence.database.repository.PresenceStatusRepository;
 import cloud.cholewa.presence.model.DailyPresenceReport;
@@ -14,7 +13,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 
-import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -37,8 +35,7 @@ public class PresenceStatisticsService {
     private final PresenceIntervalCalculator presenceIntervalCalculator;
     private final PresenceStatisticsCalculator presenceStatisticsCalculator;
     private final PresenceTracker presenceTracker;
-    private final PresenceProperties presenceProperties;
-    private final Clock clock;
+    private final PresenceRetention presenceRetention;
 
     //Built on the interval report, so the same rules decide who is known (404) and which range is
     //valid (400). A resident nothing is stored for has no day at all.
@@ -154,10 +151,12 @@ public class PresenceStatisticsService {
     //checked, so a year away is one row with an old start - while the rows around it that ended
     //earlier are deleted. Counted from that old start, the purged stretch would read as observed
     //and nobody at home.
+    //The horizon is the one the purge deletes by, whether or not a purge has run: with the job
+    //switched off the statistics still start there, a day or so later than the rows would allow.
     private LocalDateTime observedFrom(final LocalDateTime from, final LocalDateTime firstStart) {
-        final LocalDateTime kept = LocalDateTime.now(clock).minus(presenceProperties.retention());
-
-        return Stream.of(from, firstStart, kept).max(Comparator.naturalOrder()).orElseThrow();
+        return Stream.of(from, firstStart, presenceRetention.horizon())
+            .max(Comparator.naturalOrder())
+            .orElseThrow();
     }
 
     //where the statistics of a range end: at the last check, or at the end of the range when that

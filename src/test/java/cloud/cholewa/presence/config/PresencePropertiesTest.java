@@ -36,8 +36,8 @@ class PresencePropertiesTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"P0D", "PT1H", "P6D", "-P30D", "0"})
-    void should_refuse_to_start_with_a_retention_shorter_than_a_week(final String retention) {
+    @ValueSource(strings = {"P0D", "PT1H", "P6D", "-P30D", "0", "999999999999"})
+    void should_refuse_to_start_with_a_retention_shorter_than_a_week_or_absurdly_long(final String retention) {
         contextRunner.withPropertyValues("presence.retention=" + retention)
             .run(context -> assertThat(context).hasFailed());
     }

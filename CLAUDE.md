@@ -197,8 +197,19 @@ review.
   two pooled connections the detection needs. Reactive `@Scheduled` methods do not block the
   scheduler thread, so it cannot hold the detection up either. In the `test` profile the cron
   is `-` (off); the schedule has its only default in `application.yaml`.
-- **`presence.retention` cannot be made small enough to wipe the table**: `@DurationUnit(DAYS)`
-  and `@DurationMin(days = 7)`, pinned by `PresencePropertiesTest`. Without the unit `365` binds
+- **A reactive `@Scheduled` method is called once, not once per run.** Spring invokes it at
+  startup, keeps the `Mono` and subscribes to it again every time
+  (`ScheduledAnnotationReactiveSupport`). Anything computed while the `Mono` is built — a
+  cutoff, "now", a value read from a property that may change — is frozen at the start of the
+  pod. `PresenceRetention.purge()` first had its cutoff outside the chain: it would have
+  deleted up to the same date every night until a restart, logging that date as if it were
+  current. Everything time-dependent goes inside `Mono.defer`
+  (`PresenceEngine.detect()` was safe only because its clock read sits in a lambda), and the
+  test for it subscribes twice to the **same** `Mono` with the clock moved on — a fresh
+  `purge()` per test cannot see the bug. Worth checking in every service with a reactive
+  `@Scheduled`.
+- **`presence.retention` cannot be made small enough to wipe the table**: `@DurationUnit(DAYS)`,
+  `@DurationMin(days = 7)` and `@DurationMax(days = 3660)`, pinned by `PresencePropertiesTest`. Without the unit `365` binds
   as 365 ms, the cutoff is "now" and the nightly delete takes every row, the current ones
   included — the next pass would silently reopen each period dated now
   (`PresenceStatusStore.confirm`), every night.
@@ -210,7 +221,10 @@ review.
 - **A kept row can start before the retention horizon** (one ABSENT row for a year away), while
   everything around it that ended earlier is deleted. So the first `started_at` is not where
   the observed history starts: `observedFrom` of both statistics is clamped to
-  `now − retention`, or the purged stretch would read as observed and nobody at home. The
+  `PresenceRetention.horizon()` — the same value the purge deletes by — or the purged stretch
+  would read as observed and nobody at home. The clamp does not know whether a purge has run
+  (with the job off the statistics simply start there too), nor how far an earlier, shorter
+  retention has purged: raising `presence.retention` re-exposes that stretch as empty. The
   interval report has no observed bounds and cannot say this; the range limit (366 days,
   `ReportRange`) is not derived from `presence.retention` either — change one, look at the
   other.

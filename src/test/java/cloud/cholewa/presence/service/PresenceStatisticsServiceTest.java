@@ -65,7 +65,7 @@ class PresenceStatisticsServiceTest {
         sut = new PresenceStatisticsService(
             presenceReportService, presenceStatusRepository,
             new PresenceIntervalCalculator(), new PresenceStatisticsCalculator(clock), presenceTracker,
-            properties, clock);
+            new PresenceRetention(presenceStatusRepository, properties, clock));
     }
 
     @Test

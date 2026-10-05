@@ -67,14 +67,15 @@ checked** more than `presence.retention` ago (365 days) are deleted, and the num
 
 - A row goes by its last check, not by its start. The row a member is in right now is checked
   every minute — after a year at home, or a year away — so it always survives; only the reports
-  cut it to the range they are asked for.
+  cut it to the range they are asked for. The one exception: a detection that was down for
+  longer than the retention period — then the current rows have not been checked either.
 - A member removed from the registry, or deactivated, is no longer checked: their last row,
   and with it the rest of their history, goes one retention period after they left.
 - A purge that fails or does not answer within a minute logs an error with the exception and is
   made up for by the next one. It does not touch the detection. (A statement the database was
   still working on when the job gave up may complete all the same.)
-- **`presence.retention` is at least a week, and a bare number is days** — the service does not
-  start otherwise. A `Duration` without a unit would bind as milliseconds: `365` would put the
+- **`presence.retention` is between a week and ten years, and a bare number is days** — the
+  service does not start otherwise. A `Duration` without a unit would bind as milliseconds: `365` would put the
   cutoff at "now" and the job would delete the whole table.
 - The reports answer at most 366 days, so a retention shorter than a year also shortens what
   they can show. The statistics never count anything before the retention horizon as observed
@@ -110,7 +111,7 @@ skipped.
 | `database.pool.max-size` | — | `2` | This service's share of the connection budget of the managed database |
 | `registry.base-url` | `REGISTRY_BASE_URL` | `http://database-service:6200` (`http://localhost:6005` in `local`) | Where the household registry is read from |
 | `registry.response-timeout` | `REGISTRY_RESPONSE_TIMEOUT` | `PT5S` | Time allowed for one answer of `database-service` |
-| `presence.retention` | `PRESENCE_RETENTION` | `P365D` | How long the history is kept, counted from the last check of a row; at least `P7D`, a bare number is days |
+| `presence.retention` | `PRESENCE_RETENTION` | `P365D` | How long the history is kept, counted from the last check of a row; `P7D` … `P3660D`, a bare number is days |
 | `presence.retention-cron` | `PRESENCE_RETENTION_CRON` | `0 0 3 * * *` | When the old history is deleted (Spring cron, system zone); `-` switches it off |
 | `presence.absence-threshold` | `PRESENCE_ABSENCE_THRESHOLD` | `PT10M` | How long every device of a member has to stay unseen before the member is absent |
 
