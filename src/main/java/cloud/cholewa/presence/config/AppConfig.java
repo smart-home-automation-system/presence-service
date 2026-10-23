@@ -15,7 +15,7 @@ import org.zalando.logbook.HeaderFilter;
 import org.zalando.logbook.Logbook;
 import org.zalando.logbook.Sink;
 import org.zalando.logbook.core.WithoutBodyStrategy;
-import org.zalando.logbook.netty.LogbookClientHandler;
+import org.zalando.logbook.spring.webflux.LogbookExchangeFilterFunction;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.resources.ConnectionProvider;
 
@@ -36,13 +36,7 @@ public class AppConfig {
 
     @Bean
     @SneakyThrows
-    HttpClient unifiHttpClient(
-        final ConnectionProvider unifiConnectionProvider,
-        final CorrelationId correlationId,
-        final HeaderFilter headerFilter,
-        final Sink sink,
-        final UnifiProperties unifiProperties
-    ) {
+    HttpClient unifiHttpClient(final ConnectionProvider unifiConnectionProvider, final UnifiProperties unifiProperties) {
         //the gateway serves a self-signed certificate - trust exactly that one, pinned by its SHA-256
         //fingerprint, instead of trusting everything
         SslContext sslContext = SslContextBuilder.forClient()
@@ -51,8 +45,6 @@ public class AppConfig {
                 .build()
             )
             .build();
-
-        final Logbook unifiLogbook = unifiLogbook(correlationId, headerFilter, sink);
 
         return HttpClient.create(unifiConnectionProvider)
             .secure(sslContextSpec -> sslContextSpec.sslContext(sslContext)
@@ -67,27 +59,39 @@ public class AppConfig {
                 })
             )
             .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) unifiProperties.connectTimeout().toMillis())
-            .responseTimeout(unifiProperties.responseTimeout())
-            .doOnConnected(connection -> connection.addHandlerLast(new LogbookClientHandler(unifiLogbook)));
+            .responseTimeout(unifiProperties.responseTimeout());
     }
 
     @Bean
     WebClient unifiWebClient(
         final WebClient.Builder webClientBuilder,
         final HttpClient unifiHttpClient,
-        final UnifiProperties unifiProperties
+        final UnifiProperties unifiProperties,
+        final CorrelationId correlationId,
+        final HeaderFilter headerFilter,
+        final Sink sink
     ) {
+        final Logbook unifiLogbook = unifiLogbook(correlationId, headerFilter, sink);
+
         return webClientBuilder
             .baseUrl("https://" + unifiProperties.host())
             .clientConnector(new ReactorClientHttpConnector(unifiHttpClient))
+            //cholewa-commons >= 1.10.0 puts Logbook on the injected builder (a prototype: this client's own
+            //copy), with full bodies; the gateway gets the Logbook without bodies in its place - from the
+            //reactive chain too, so its lines carry the traceId (HAS-305)
+            .filters(filters -> {
+                filters.removeIf(LogbookExchangeFilterFunction.class::isInstance);
+                filters.add(new LogbookExchangeFilterFunction(unifiLogbook));
+            })
             .build();
     }
 
     @Bean
-    HttpClient registryHttpClient(final Logbook logbook, final RegistryProperties registryProperties) {
+    //logged by the Logbook filter cholewa-commons puts on the injected builder, from the reactive chain with
+    //its traceId - no handler of our own here, or every call is logged twice (HAS-305)
+    HttpClient registryHttpClient(final RegistryProperties registryProperties) {
         return HttpClient.create()
-            .responseTimeout(registryProperties.responseTimeout())
-            .doOnConnected(connection -> connection.addHandlerLast(new LogbookClientHandler(logbook)));
+            .responseTimeout(registryProperties.responseTimeout());
     }
 
     @Bean
