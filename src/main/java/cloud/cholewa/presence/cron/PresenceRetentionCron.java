@@ -1,16 +1,22 @@
 package cloud.cholewa.presence.cron;
 
+import cloud.cholewa.commons.scheduling.ScheduledPass;
 import cloud.cholewa.presence.service.PresenceRetention;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
+
 //A class of its own, apart from PresenceCron: the two share nothing, and the detection must go on
 //whatever happens here.
 @Component
 @RequiredArgsConstructor
 public class PresenceRetentionCron {
+
+    //Bounded (HAS-305) above the 60 s of the purge's own timeout, which stays inside
+    static final Duration LIMIT = Duration.ofMinutes(2);
 
     private final PresenceRetention presenceRetention;
 
@@ -20,6 +26,6 @@ public class PresenceRetentionCron {
     //test profile does.
     @Scheduled(cron = "${presence.retention-cron}")
     Mono<Void> purgeHistory() {
-        return presenceRetention.purge();
+        return ScheduledPass.bounded("presence retention", LIMIT, presenceRetention::purge);
     }
 }

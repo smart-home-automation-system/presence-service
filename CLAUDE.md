@@ -43,7 +43,7 @@ review.
   and `UNIFI_HOST`; in the cluster both come from the manifest in `deployment-tools`. Neither
   has a default outside the `test` document on purpose: with a `localhost` default a pod that
   lost the variable would become Ready and answer 502 on every call.
-- Spring Boot **4.1.1** — the first service past the org target of 4.1.0. The rule since
+- Spring Boot **4.1.2** (HAS-305), `cholewa-commons` 1.11.0 (from 1.5.1), `smart-home-sdk` 1.12.0 (from 1.3.0). The rule since
   HAS-149: a service takes the newest Boot together with the newest own libraries whenever it
   is worked on; the others follow with their next task.
 
@@ -167,6 +167,12 @@ review.
   have no timeout of their own beyond the pool's acquire and validation bounds. Fine for a
   handful of requests; a frontend polling per open profile is the moment to give the service a
   third connection (the budget has room) rather than to find out from skipped passes.
+- **Every scheduled pass is bounded and runs on a pool** (HAS-305, after blinds-service froze on
+  2026-10-22 - Spring blocks a scheduler thread until a reactive fixed-delay pass completes, and
+  Boot had one thread): `cholewa-commons` 1.11.0 gives the scheduler a pool of 10 (pinned by
+  `PresenceServiceApplicationTest`), and both crons return `ScheduledPass.bounded` - the detection
+  55 s, the retention 2 min, each a little above its own timeout (50 s, 60 s), which stays inside;
+  pinned by `PresenceCronTest` and `PresenceRetentionCronTest`.
 - **The passes run with `fixedDelay` and a 50 s timeout.** For a method returning a `Mono`
   Spring waits for the previous run only with a fixed delay; at a fixed rate a slow pass
   overlaps the next one and both store the same change. The timeout is what keeps a call that
@@ -251,10 +257,16 @@ review.
 - **The gateway is logged without bodies, everything else with them.** One answer of the
   client list is tens of kilobytes every minute — above the 16 KB at which the container
   runtime splits a log line. `AppConfig` therefore builds a second `Logbook` for the UniFi
-  `HttpClient` with `WithoutBodyStrategy`, from the autoconfigured correlation id, header
+  client with `WithoutBodyStrategy`, from the autoconfigured correlation id, header
   filter and sink. It must not become a bean: a `Logbook` bean makes the autoconfigured one
-  back off and the server-side logging disappears. `UnifiLogbookTest` guards the key
-  obfuscation and the missing body.
+  back off and the server-side logging disappears. **Since HAS-305 (`cholewa-commons` 1.10.0+)
+  Logbook logs from the reactive chain**: the library puts its `LogbookExchangeFilterFunction`
+  (full bodies) on the injected `WebClient.Builder`; the UniFi `WebClient` removes that filter
+  and adds one with the body-less `Logbook` in its place, the registry client keeps the
+  library's - so every call is logged once, with its `traceId`, and no `LogbookClientHandler` is
+  left on an `HttpClient` (it would log a call twice). The bump alone made the UniFi bodies
+  appear in the log: `UnifiLogbookTest` failed on it, and guards the key obfuscation and the
+  missing body.
 - **`PresenceCron` is switched off in the `test` profile** (`presence.detection-enabled`), or
   every context started by a test would poll a gateway that is not there.
 - **`UnifiClient.getConnectedClients()` returns `Flux<ConnectedClient>`** — the contract the

@@ -113,14 +113,11 @@ class AppConfigTlsTest {
         AppConfig appConfig = new AppConfig();
         WebClient webClient = appConfig.unifiWebClient(
             WebClient.builder(),
-            appConfig.unifiHttpClient(
-                appConfig.unifiConnectionProvider(),
-                new DefaultCorrelationId(),
-                HeaderFilter.none(),
-                new DefaultSink(new DefaultHttpLogFormatter(), new DefaultHttpLogWriter()),
-                properties
-            ),
-            properties
+            appConfig.unifiHttpClient(appConfig.unifiConnectionProvider(), properties),
+            properties,
+            new DefaultCorrelationId(),
+            HeaderFilter.none(),
+            new DefaultSink(new DefaultHttpLogFormatter(), new DefaultHttpLogWriter())
         );
 
         return new UnifiClient(webClient, properties);
