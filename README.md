@@ -83,6 +83,28 @@ checked** more than `presence.retention` ago (365 days) are deleted, and the num
   has no such bound — there a purged stretch looks like an absence.
 - `presence.retention-cron: "-"` switches the job off.
 
+## A detection that does not run is told
+
+A pass never fails - when the gateway, the registry or the database cannot be reached it is skipped
+and the last known presence is kept and served. That is right for one missed minute, and wrong for
+two days: on 2026-11-17 the gateway replaced its certificate and every pass was skipped until
+somebody noticed. Since HAS-476 the passes are judged as a whole and told on the **technical Discord
+channel** of `notification-service` (alert / info, English, no SMS):
+
+- **an alert** once no pass was evaluated for `presence.alert.skipped-after` (10 minutes), naming
+  the cause as the service words it (`UniFi unreachable: CertificateException`,
+  `database-service answered: 503`, the database - unread at the start, or not one decision of a pass
+  written -, the pass timeout) - never a body of the gateway nor
+  the text of a driver; a foreign certificate also names the fix (the fingerprint, below);
+- **a reminder** every hour while it lasts;
+- **one info** at the first evaluated pass, with how long the detection was down - also announcing an
+  alert that could not be published while it lasted; an info that did not get through is sent again
+  with the next pass.
+
+A single skipped pass and a restart publish nothing; a restored state alone is not an evaluated pass.
+The episode lives in memory: a restart inside an outage starts the count again. A notification
+neither fails nor delays a pass (its own subscription, cut off after 30 s).
+
 ## Run locally
 
 ```bash
@@ -96,7 +118,10 @@ mvn spring-boot:run -Dspring-boot.run.profiles=home,local
 | cluster (`home` profile) | 6200 | 8200 |
 
 The Actuator exposes `health`, `info` and `prometheus`; the cluster logs are JSON (logstash),
-locally they stay plain text. No message broker is needed. To start, the service needs a
+locally they stay plain text. The one broker connection is `/notification` (user `notification`,
+`spring.rabbitmq.*`, `localhost` in `local`), where the service publishes and declares nothing; it does
+not start without `rabbitmq-password`, and a run with `local` publishes into the dev queue
+(`cholewa.notification.env: dev`). To start, the service needs a
 PostgreSQL database (Flyway creates the schema), the UniFi settings below — a missing one fails
 the startup and names the property — and, for a meaningful result, a running `database-service`
 (locally on port 6005); while that one is unreachable and was never read, the passes are
@@ -114,6 +139,9 @@ skipped.
 | `presence.retention` | `PRESENCE_RETENTION` | `P365D` | How long the history is kept, counted from the last check of a row; `P7D` … `P3660D`, a bare number is days |
 | `presence.retention-cron` | `PRESENCE_RETENTION_CRON` | `0 0 3 * * *` | When the old history is deleted (Spring cron, system zone); `-` switches it off |
 | `presence.absence-threshold` | `PRESENCE_ABSENCE_THRESHOLD` | `PT10M` | How long every device of a member has to stay unseen before the member is absent |
+| `presence.alert.skipped-after` | `PRESENCE_ALERT_SKIPPEDAFTER` | `PT10M` | No pass evaluated for this long is an alert on the technical channel; `PT2M` … `PT24H`, a bare number is minutes |
+| `spring.rabbitmq.password` | `rabbitmq-password` | — (required) | Password of the broker user `notification`; in the cluster from the `rabbitmq` secret (`notification-password`) |
+| `cholewa.notification.env` | — | `prod` (`dev` in `local`) | Which notification queue the alerts go to |
 
 The `unifi.*` group, validated at startup:
 
@@ -133,8 +161,10 @@ Network application's settings. It is shown only once.
 certificate, pinned by its SHA-256 fingerprint — nothing else, and no global trust-all.
 Hostname verification is off for this client, because the certificate does not name the LAN
 address and the pinned fingerprint is the stronger check. When the gateway replaces its
-certificate (a firmware update can do that), every call fails with `502 UniFi unreachable:
-CertificateException`; read the new fingerprint and update the property:
+certificate (a firmware update can do that - it did on 2026-11-17), every call fails with
+`502 UniFi unreachable: CertificateException`, every pass is skipped and after ten minutes the
+technical channel is told; read the new fingerprint and update the property (the certificate
+pinned in `application.yaml` is valid until 2029-02-18):
 
 ```bash
 openssl s_client -connect <gateway>:443 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256
