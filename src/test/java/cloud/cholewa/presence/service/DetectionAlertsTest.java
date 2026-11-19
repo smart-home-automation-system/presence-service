@@ -119,7 +119,7 @@ class DetectionAlertsTest {
         assertThatCode(() -> skippedAt(10, CERTIFICATE)).doesNotThrowAnyException();
 
         verify(notificationPublisher).publishAlert(anyString());
-        assertThat(DetectionAlerts.PUBLISH_TIMEOUT).isEqualTo(Duration.ofSeconds(30));
+        assertThat(DetectionAlerts.PUBLISH_TIMEOUT).hasSeconds(30);
     }
 
     @Test

@@ -12,8 +12,8 @@ import java.util.Optional;
 //Judged by whole passes: the alert once no pass was evaluated for skippedAfter, counted from the last
 //evaluated pass (from the first skipped one when none was evaluated since the start - a restart inside
 //an outage starts the count again), a reminder every REMINDER_EVERY while it lasts, and one return at the
-//first evaluated pass after an alert was due - also when it never got through, which the return then says;
-//a return that did not get through is offered again by the next evaluated pass, until a new outage begins.
+//first evaluated pass after an alert was due - also when it never got through, which the return then says.
+//A return that did not get through is offered again by the next evaluated pass, until a new outage begins.
 //The episode lives in memory, as the outage of the Shelly of boiler-service
 final class PassWatch {
 
