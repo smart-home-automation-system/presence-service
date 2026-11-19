@@ -31,6 +31,7 @@ import java.util.Set;
 
 import static cloud.cholewa.presence.model.PresenceStatus.ABSENT;
 import static cloud.cholewa.presence.model.PresenceStatus.PRESENT;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -53,6 +54,8 @@ class PresenceEngineTest {
     private HouseholdClient householdClient;
     @Mock
     private PresenceStatusStore presenceStatusStore;
+    @Mock
+    private DetectionAlerts detectionAlerts;
 
     private final MutableClock clock = new MutableClock();
     private PresenceEngine sut;
@@ -64,6 +67,7 @@ class PresenceEngineTest {
             householdClient,
             new PresenceTracker(new PresenceProperties(Duration.ofMinutes(10), Duration.ofDays(365)), clock),
             presenceStatusStore,
+            detectionAlerts,
             clock
         );
         lenient().when(presenceStatusStore.findLatestPerMember()).thenReturn(Flux.empty());
@@ -231,6 +235,147 @@ class PresenceEngineTest {
         detectAt(T0.plusMinutes(1));
         verify(presenceStatusStore).apply(new Changed("Anna", PRESENT, T0.plusMinutes(1), T0.plusMinutes(1)));
         verify(presenceStatusStore).apply(new Confirmed("Jan", ABSENT, T0.plusMinutes(1)));
+    }
+
+    //HAS-476: every pass is told, evaluated or skipped with its cause in fixed words
+    @Test
+    void should_tell_an_evaluated_pass() {
+        connected(PHONE);
+
+        detectAt(T0);
+
+        verify(detectionAlerts).evaluated();
+        verify(detectionAlerts, never()).skipped(any());
+    }
+
+    @Test
+    void should_tell_a_skipped_pass_with_the_cause_the_client_worded() {
+        when(unifiClient.getConnectedClients()).thenReturn(Flux.error(new UnifiCallException(
+            HttpStatus.BAD_GATEWAY, "UniFi unreachable: CertificateException")));
+
+        detectAt(T0);
+
+        verify(detectionAlerts).skipped("UniFi unreachable: CertificateException");
+        verify(detectionAlerts, never()).evaluated();
+    }
+
+    @Test
+    void should_tell_the_registry_as_the_cause_when_it_was_never_read() {
+        connected(PHONE);
+        when(householdClient.getActiveMembers())
+            .thenReturn(Mono.error(new RegistryCallException("database-service answered: 503")));
+
+        detectAt(T0);
+
+        verify(detectionAlerts).skipped("database-service answered: 503");
+    }
+
+    //the text of the driver never reaches the channel: a failed read of the state is named by its type
+    @Test
+    void should_name_a_failed_restore_without_the_text_of_the_driver() {
+        when(presenceStatusStore.findLatestPerMember())
+            .thenReturn(Flux.error(new IllegalStateException("password authentication failed for user x")));
+        connected(PHONE);
+
+        detectAt(T0);
+
+        verify(detectionAlerts).skipped("the presence state could not be read from the database: IllegalStateException");
+    }
+
+    @Test
+    void should_name_a_restore_that_never_answered_by_its_bound() {
+        when(presenceStatusStore.findLatestPerMember()).thenReturn(Flux.never());
+        connected(PHONE);
+
+        StepVerifier.withVirtualTime(() -> sut.detect())
+            .thenAwait(Duration.ofMinutes(1))
+            .verifyComplete();
+
+        verify(detectionAlerts).skipped("the presence state was not read from the database within PT20S");
+    }
+
+    @Test
+    void should_name_a_pass_that_did_not_finish_by_its_bound() {
+        when(unifiClient.getConnectedClients()).thenReturn(Flux.never());
+
+        StepVerifier.withVirtualTime(() -> sut.detect())
+            .thenAwait(Duration.ofMinutes(1))
+            .verifyComplete();
+
+        verify(detectionAlerts).skipped("the pass did not finish within PT50S");
+    }
+
+    @Test
+    void should_name_anything_else_by_its_type_alone() {
+        assertThat(PresenceEngine.causeOf(new IllegalArgumentException("a body of somebody")))
+            .isEqualTo("the pass failed: IllegalArgumentException");
+    }
+
+    //the database down after the start: not one decision written is a skipped pass, named by the type
+    @Test
+    void should_tell_a_skipped_pass_when_not_one_decision_could_be_written() {
+        when(householdClient.getActiveMembers()).thenReturn(Mono.just(List.of(ANNA, JAN)));
+        when(presenceStatusStore.apply(any()))
+            .thenReturn(Mono.error(new IllegalStateException("connection refused to 10.0.0.1")));
+        connected(PHONE);
+
+        detectAt(T0);
+
+        verify(detectionAlerts).skipped("the presence state could not be written to the database: IllegalStateException");
+        verify(detectionAlerts, never()).evaluated();
+    }
+
+    //one failed member among others is still a pass that decided
+    @Test
+    void should_tell_an_evaluated_pass_when_one_decision_of_several_was_written() {
+        when(householdClient.getActiveMembers()).thenReturn(Mono.just(List.of(ANNA, JAN)));
+        connected(PHONE);
+        when(presenceStatusStore.apply(new Changed("Anna", PRESENT, T0, T0)))
+            .thenReturn(Mono.error(new IllegalStateException("database down")));
+
+        detectAt(T0);
+
+        verify(detectionAlerts).evaluated();
+        verify(detectionAlerts, never()).skipped(any());
+    }
+
+    //an empty registry decides nothing and writes nothing - an evaluated pass all the same
+    @Test
+    void should_tell_an_evaluated_pass_for_an_empty_registry() {
+        connected(PHONE);
+        when(householdClient.getActiveMembers()).thenReturn(Mono.just(List.of()));
+
+        detectAt(T0);
+
+        verify(detectionAlerts).evaluated();
+    }
+
+    //a restored state alone is not an evaluated pass
+    @Test
+    void should_not_tell_an_evaluated_pass_when_only_the_state_was_restored() {
+        when(presenceStatusStore.findLatestPerMember()).thenReturn(Flux.just(
+            new PresenceStatusEntity(7L, "Anna", PRESENT, T0.minusHours(2), T0.minusMinutes(1))));
+        when(unifiClient.getConnectedClients()).thenReturn(Flux.error(new UnifiCallException(
+            HttpStatus.BAD_GATEWAY, "UniFi unreachable: ConnectException")));
+
+        detectAt(T0);
+
+        verify(detectionAlerts, never()).evaluated();
+        verify(detectionAlerts).skipped("UniFi unreachable: ConnectException");
+    }
+
+    //the same Mono subscribed again tells again - nothing is frozen when the pass is built
+    @Test
+    void should_tell_every_subscription_of_the_same_pass() {
+        when(unifiClient.getConnectedClients()).thenReturn(Flux.error(new UnifiCallException(
+            HttpStatus.BAD_GATEWAY, "UniFi unreachable: ConnectException")));
+        final Mono<Void> pass = sut.detect();
+
+        pass.as(StepVerifier::create).verifyComplete();
+        clock.now = T0.plusMinutes(1);
+        pass.as(StepVerifier::create).verifyComplete();
+
+        verify(detectionAlerts, times(2)).skipped("UniFi unreachable: ConnectException");
     }
 
     private void connected(final String... macAddresses) {

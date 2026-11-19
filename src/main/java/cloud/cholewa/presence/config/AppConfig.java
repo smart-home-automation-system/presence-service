@@ -23,7 +23,9 @@ import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLParameters;
 
 @Configuration
-@EnableConfigurationProperties({UnifiProperties.class, RegistryProperties.class, PresenceProperties.class})
+@EnableConfigurationProperties({
+    UnifiProperties.class, RegistryProperties.class, PresenceProperties.class, PresenceAlertProperties.class
+})
 public class AppConfig {
 
     //Spring infers only close() and shutdown() as destroy methods, so the pool is named explicitly

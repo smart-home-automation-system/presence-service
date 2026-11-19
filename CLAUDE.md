@@ -22,7 +22,9 @@ review.
   are polled once a minute. `api-gateway-service` routes the reports by an **allowlist**
   (path and method per endpoint), so **a new endpoint here needs its own entry there** or it
   answers 404 from outside — and `GET /home/presence/clients`, diagnostic, listing the MAC
-  address of every device on the network, must never get one. No RabbitMQ.
+  address of every device on the network, must never get one. **One broker connection since
+  HAS-476**: `/notification` (user `notification`), where `DetectionAlerts` publishes on the
+  technical channel through `NotificationPublisher`; it consumes and declares nothing.
 - Owns the presence history in its own database (`home-automation-presence`); the members and
   their devices stay in `database-service` and are never copied here.
 - Uses libraries: `cholewa-commons` and `smart-home-sdk` — the latter only for the registry
@@ -38,12 +40,14 @@ review.
   `6200`, Actuator `8200`.
 - Needs a PostgreSQL database (`database.*`, Flyway runs at startup) and, to produce
   anything, a reachable `database-service` (`registry.base-url`, `http://localhost:6005` in
-  the `local` profile). No broker. The `unifi.*` group is validated at bind time, so the service
+  the `local` profile) and, since HAS-476, `rabbitmq-password` (`cholewa.required-properties`
+  refuses the start without it; `localhost` and the dev queue in `local`). The `unifi.*` group is validated at bind time, so the service
   does not start without `UNIFI_API_KEY` (never in `application.yaml` — the repo is public)
   and `UNIFI_HOST`; in the cluster both come from the manifest in `deployment-tools`. Neither
   has a default outside the `test` document on purpose: with a `localhost` default a pod that
   lost the variable would become Ready and answer 502 on every call.
-- Spring Boot **4.1.2** (HAS-305), `cholewa-commons` 1.11.0 (from 1.5.1), `smart-home-sdk` 1.12.0 (from 1.3.0). The rule since
+- Spring Boot **4.1.2** (HAS-305; still the newest 4.1 on Maven Central at HAS-476), `cholewa-commons` 1.14.0
+  (HAS-476, from 1.11.0), `smart-home-sdk` 1.23.0 (HAS-476, from 1.12.0). The rule since
   HAS-149: a service takes the newest Boot together with the newest own libraries whenever it
   is worked on; the others follow with their next task.
 
@@ -61,6 +65,25 @@ review.
   with nothing read before → the pass is skipped and the state stays. With a registry read
   earlier, an outage of `database-service` falls back to that last list — an outage must not
   read as a household without members.
+- **...but a pass that never runs is told** (HAS-476, after the certificate of the gateway changed on
+  2026-11-17 and every pass was skipped for two days while the API answered 200 "everybody at home").
+  `PresenceEngine.detect()` tells `DetectionAlerts` every pass - `evaluated()` after a pass that
+  decided on what it saw (a restored state alone is not one), `skipped(cause)` in its
+  `onErrorResume`. The judgement is `PassWatch`, a plain class like the tracker: the alert once no
+  pass was evaluated for `presence.alert.skipped-after` (PT10M, `@DurationUnit(MINUTES)`,
+  PT2M … PT24H, pinned by `PresenceAlertPropertiesTest`) counted from the last evaluated pass (from
+  the first skipped one after a start - a restart inside an outage starts the count again), a
+  reminder every hour, one info at the first evaluated pass after an alert was due, announcing an
+  alert that never got through (a return that did not get through is offered again by the next
+  evaluated pass). The episode lives in memory, as in boiler-service. **The cause is
+  in fixed words only** (`PresenceEngine.causeOf`): the messages of `UnifiCallException` /
+  `RegistryCallException` are built here, a failed restore - or a pass not one of whose decisions
+  could be written (the database down after the start) - is a `PresenceStateException` named by the
+  type of its cause, a timeout by its bound, anything else by its type - never a body of the gateway
+  nor the text of a driver (the log line of a skipped pass uses the same words). **A notice neither
+  fails nor delays the pass**: `DetectionAlerts` sends it on its own subscription, cut off after 30 s
+  and swallowed, so the pass bounded at 55 s never waits for the broker; the alert and the reminders
+  count as told only once the broker took them.
 - **Absence needs the grace period, counted from the first pass that missed the member** —
   not from the last sighting — **and it starts over when passes were skipped in between**
   (two evaluated passes more than 3 minutes apart, `MAX_OBSERVATION_GAP`). The period is time
@@ -277,7 +300,8 @@ review.
   client without a MAC address (VPN, Teleport) and the whole list is lost. Keep the mapping
   step. The MAC is lowercased in the constructor, matching the registry in
   `database-service` (lowercase with colons, enforced there by a CHECK constraint).
-- **The gateway's certificate is pinned, not trusted blindly.** It is self-signed, so
+- **The gateway's certificate is pinned, not trusted blindly.** The fingerprint in
+  `application.yaml` is the certificate served since 2026-11-17, valid until 2029-02-18 (HAS-476). It is self-signed, so
   `AppConfig` trusts exactly the certificate whose SHA-256 fingerprint is in
   `unifi.certificate-fingerprint` (not a secret). Hostname verification is switched off for
   this client, because the certificate does not name the LAN address — and that has to be

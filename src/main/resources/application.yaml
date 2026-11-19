@@ -15,6 +15,34 @@ spring:
     # default LIMITED restores ThreadLocals only in "tap" and "handle", so traceId would be
     # missing from the MDC of every log statement inside a reactive chain
     context-propagation: auto
+  # The one connection of the service (HAS-476): the virtual host of the notifications, where it tells
+  # the technical channel that the detection does not run (NotificationPublisher of cholewa-commons). It
+  # consumes nothing and declares nothing. Confirms, returns and the mandatory flag are what the publisher
+  # needs to know a notification reached a queue; it refuses to start without them
+  rabbitmq:
+    host: rabbitmq-headless
+    port: 5672
+    username: notification
+    # no default on purpose: cholewa.required-properties refuses the start without it
+    password: ${rabbitmq-password}
+    virtual-host: /notification
+    connection-timeout: 10s
+    requested-heartbeat: 10s
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+      # defaults to false; without it the trace breaks at the broker
+      observation-enabled: true
+
+cholewa:
+  # refuses the start before the first bean when one of these has no value (cholewa-commons >= 1.9.0)
+  required-properties:
+    - property: spring.rabbitmq.password
+      variable: rabbitmq-password
+  notification:
+    enabled: true
+    env: prod
 
 database:
   host: ${database-host:localhost}
@@ -69,7 +97,9 @@ logging:
 #running and answering 502
 unifi:
   site: Default
-  certificate-fingerprint: "94:37:F6:2E:A1:15:F8:EF:D8:09:9D:2B:69:69:75:CC:A7:50:B3:49:6C:DD:BA:24:B8:6F:66:D3:5D:4B:3B:7F"
+  # the certificate the gateway serves since 2026-11-17, valid until 2029-02-18 (HAS-476); a new one makes every
+  # pass fail with "UniFi unreachable: CertificateException" - and, after presence.alert.skipped-after, an alert
+  certificate-fingerprint: "87:C0:15:BD:F1:B4:61:FE:CA:A8:51:65:2C:1B:95:12:8A:72:67:6B:53:FD:F2:95:BA:DC:91:13:D9:B6:B3:EE"
 
 #the household registry is read from database-service inside the cluster, over k8s DNS
 registry:
@@ -80,6 +110,10 @@ presence:
   # history older than this (by the last check of a row) is deleted once a day
   retention: P365D
   retention-cron: "0 0 3 * * *"
+  # no pass evaluated for this long is an alert on the technical channel, reminded every hour, and one
+  # info when a pass is evaluated again (HAS-476); a bare number is minutes
+  alert:
+    skipped-after: PT10M
 
 ---
 
@@ -87,6 +121,13 @@ spring:
   config:
     activate:
       on-profile: local
+  rabbitmq:
+    host: localhost
+
+cholewa:
+  notification:
+    # a run outside the cluster publishes into the dev queue, never to the channel of the house
+    env: dev
 
 registry:
   base-url: http://localhost:6005
@@ -114,6 +155,15 @@ spring:
       on-profile: test
   flyway:
     enabled: false
+  # nothing listens here: a test that reaches the broker fails instead of publishing
+  rabbitmq:
+    host: localhost
+    port: 1
+    password: test
+
+cholewa:
+  notification:
+    env: dev
 
 logbook:
   format:
