@@ -46,8 +46,12 @@ review.
   and `UNIFI_HOST`; in the cluster both come from the manifest in `deployment-tools`. Neither
   has a default outside the `test` document on purpose: with a `localhost` default a pod that
   lost the variable would become Ready and answer 502 on every call.
-- Spring Boot **4.1.2** (HAS-305; still the newest 4.1 on Maven Central at HAS-476), `cholewa-commons` 1.14.0
-  (HAS-476, from 1.11.0), `smart-home-sdk` 1.23.0 (HAS-476, from 1.12.0). The rule since
+- Spring Boot **4.2.0** (HAS-511, from 4.1.2), `cholewa-commons` 2.0.0 (HAS-511, from 1.14.0), `smart-home-sdk` 1.26.0
+  (HAS-511, from 1.23.0 - `MemberPermission.AMPLIFIER_UNLOCK`: the read of the registry fails on a permission the SDK
+  does not know, so this service had to move before anybody is granted it). Boot 4.2 moved the classic RabbitMQ
+  support to `spring-boot-starter-rabbitmq`; the one connection here is the auto-configured one of
+  `NotificationPublisher`, so the starter is all that changed - no hand-built connection, no `RabbitProperties`. The
+  plugins the Boot parent manages carry no version of their own. The rule since
   HAS-149: a service takes the newest Boot together with the newest own libraries whenever it
   is worked on; the others follow with their next task.
 
@@ -270,8 +274,8 @@ review.
   because Spring Data quotes the table name in lower case while raw `@Query` SQL does not
   quote it at all. The PostgreSQL-only reads (`DISTINCT ON`) cannot be tested this way — that
   would take Testcontainers.
-- **`database.pool.max-size` is 2** (3 until 0.3.0): 16 of the 22 backend connections of the
-  managed database are allotted (heating 4 / database 6 / water 4 / presence 2), 6 are free.
+- **`database.pool.max-size` is 2** (3 until 0.3.0): the share of this service of the 47 connections of the managed
+  database (26 allotted to this project - the split is in `organization.md`).
   Two are enough here — the engine stores one member at a time (`concatMap`), the second
   connection is for the health indicator. The free ones are not a luxury: Flyway takes a JDBC
   connection at every start and a database tool opens one per session, and with a single spare
