@@ -81,6 +81,27 @@ class HouseholdClientTest {
         assertThat(mockWebServer.takeRequest().getUrl().encodedPath()).isEqualTo("/home/household");
     }
 
+    //the permission of the amplifier unlock (HAS-509, SDK 1.26.0): a value the SDK did not know failed the read of the
+    //whole registry, so every detection pass would be skipped once a member is granted it
+    @Test
+    void should_read_a_member_with_the_amplifier_unlock() {
+        enqueueJson("""
+            [
+                {
+                    "name": "Anna", "phone": "+48500000001", "active": true, "role": "resident",
+                    "permissions": ["heating_switch", "amplifier_unlock"],
+                    "devices": [{"name": "phone", "mac": "02:00:00:00:00:01"}]
+                }
+            ]
+            """);
+
+        sut.getActiveMembers()
+            .as(StepVerifier::create)
+            .assertNext(members -> assertThat(members)
+                .containsExactly(new Member("Anna", Set.of("02:00:00:00:00:01"))))
+            .verifyComplete();
+    }
+
     //an empty registry is a normal answer since database-service 0.6.1, not an error
     @Test
     void should_return_an_empty_list_for_an_empty_registry() {
